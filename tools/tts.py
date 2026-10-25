@@ -29,16 +29,16 @@ def load_asr(models, threads=8):
 
 class GeminiTTS:
     """Gemini 语音合成（参考教程的做法）：用自然语言描述语气，逐句合成。
-    API Key 取自环境变量 GEMINI_API_KEY，或仓库根目录 .env 里的 GEMINI_API_KEY=...（.env 不入库）。
+    API Key 取自环境变量 GEMINI_API_KEY，或仓库根目录 .env 里的 GEMINI_API_KEY=...（.env 不入库）；
+    都没有时不带 Key 发请求，由云环境的 Network secret 自动注入 x-goog-api-key 头。
     同一句话 + 同样设置的结果缓存在 build/tts_cache/，重跑不重复计费。"""
 
     def __init__(self, cfg):
         self.model = cfg.get("model", "gemini-2.5-flash-preview-tts")
         self.voice = cfg.get("voice", "Leda")
         self.style = cfg.get("style", "")
+        # 没有本地 Key 时，假定云环境的 Network secret 会在请求里自动加上 x-goog-api-key 头
         self.key = os.environ.get("GEMINI_API_KEY") or self._dotenv()
-        if not self.key:
-            raise SystemExit("缺少 GEMINI_API_KEY（环境变量或 .env）")
         self.cache = os.path.join(ROOT, "build", "tts_cache"); os.makedirs(self.cache, exist_ok=True)
 
     @staticmethod
@@ -64,7 +64,10 @@ class GeminiTTS:
         }).encode()
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         for attempt in range(5):
-            req = urllib.request.Request(url, body, {"Content-Type": "application/json", "x-goog-api-key": self.key})
+            hdr = {"Content-Type": "application/json"}
+            if self.key:
+                hdr["x-goog-api-key"] = self.key
+            req = urllib.request.Request(url, body, hdr)
             try:
                 d = json.load(urllib.request.urlopen(req, timeout=120)); break
             except urllib.error.HTTPError as e:
