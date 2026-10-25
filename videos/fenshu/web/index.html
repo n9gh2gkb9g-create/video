@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>分数的由来</title>
+<style>
+  @font-face { font-family: "WenKai"; src: url("fonts/wenkai-medium.woff2") format("woff2"); font-weight: 500; }
+  html, body { margin: 0; background: #222; }
+  canvas { display: block; width: 100vw; max-width: 1920px; aspect-ratio: 16 / 9; margin: 0 auto; }
+  #bar { color: #ddd; font: 14px sans-serif; padding: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<div id="bar"></div>
+<script>
+// 画面是时间的纯函数：renderAt(t) 只依赖 t 和时间轴，不读系统时间、不用无种子随机数。
+const W = 1920, H = 1080, FONT = '"WenKai", "LXGW WenKai", sans-serif';
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const C = {
+  cream: [255, 248, 236], sepia: [238, 221, 186], ink: "#3b2f2a", inkSoft: "#7a6656",
+  orange: "#f08a24", red: "#e4572e", teal: "#1f9d8f", blue: "#3d7dd8", yellow: "#f6c945",
+  brown: "#8a5a3b", leather: "#7b3f22", gold: "#d9a441", paper: "#fbf3df",
+};
+let TL = null, OPT = { sub: true, names: true }, SC = {}, SG = {}, K = {};
+
+// ---------- 工具函数 ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eOut = p => 1 - Math.pow(1 - p, 3);
+const eInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const eBack = p => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const eElastic = p => p === 0 || p === 1 ? p : Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * (2 * Math.PI / 3)) + 1;
+const mix = (c1, c2, p) => `rgb(${c1.map((v, i) => Math.round(lerp(v, c2[i], p))).join(",")})`;
+function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6d2b79f5) >>> 0; let x = s; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; }
+const hash = (a, b = 0) => rng(a * 9301 + b * 49297 + 233280)();
+// 手绘“抖动”：每 1/8 秒换一次，模拟逐格动画的线条呼吸感
+let BOIL = 0;
+const jit = (k, amp = 2) => (hash(k, BOIL) - 0.5) * 2 * amp;
+
+function font(size, w = 500) { ctx.font = `${w} ${size}px ${FONT}`; }
+function popScale(p) { return p <= 0 ? 0 : eBack(clamp(p)); }
+function withT(x, y, s, r, fn) { ctx.save(); ctx.translate(x, y); ctx.rotate(r || 0); ctx.scale(s, s); fn(); ctx.restore(); }
+
+function roughLine(pts, k, amp = 1.6) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => { const X = x + jit(k + i * 7, amp), Y = y + jit(k + i * 7 + 3, amp); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+}
+function roughRect(x, y, w, h, r, k, amp = 1.6) {
+  const pts = [], n = 6;
+  const corner = (cx, cy, a0) => { for (let i = 0; i <= n; i++) { const a = a0 + i / n * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } };
+  corner(x + w - r, y + r, -Math.PI / 2); corner(x + w - r, y + h - r, 0); corner(x + r, y + h - r, Math.PI / 2); corner(x + r, y + r, Math.PI);
+  roughLine(pts, k, amp); ctx.closePath();
+}
+function card(x, y, w, h, k, fill = "#fffdf6", stroke = C.ink, lw = 4) {
+  ctx.save(); ctx.fillStyle = "rgba(60,40,20,0.13)"; roughRect(x + 8, y + 10, w, h, 26, k + 99, 1); ctx.fill(); ctx.restore();
+  roughRect(x, y, w, h, 26, k); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = "round"; ctx.stroke();
+}
+// 按比例画出一条线段（笔画书写效果）
+function strokeSeg(x1, y1, x2, y2, p, color, lw) {
+  if (p <= 0) return;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(lerp(x1, x2, p), lerp(y1, y2, p));
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+}
+function drawTimes(cx, cy, s, p, color, lw) { // 乘号 ×，两笔
+  const d = s / 2;
+  strokeSeg(cx - d, cy - d, cx + d, cy + d, prog(p, 0, 0.5), color, lw);
+  strokeSeg(cx + d, cy - d, cx - d, cy + d, prog(p, 0.5, 1), color, lw);
+}
+function drawDot(cx, cy, r, p, color) { if (p <= 0) return; ctx.beginPath(); ctx.arc(cx, cy, r * popScale(p), 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
+
+// 算式排版：items = [{t:"3"}, {op:"×"}, ...]；每项可带 p（出现进度）、color、hl（高亮圈）
+function formula(items, cx, base, size, opt = {}) {
+  font(size, 500);
+  const asc = ctx.measureText("3").actualBoundingBoxAscent, mid = base - asc / 2;
+  const opW = size * 0.95, ws = items.map(it => it.t != null ? ctx.measureText(it.t).width + size * 0.08 : opW);
+  let x = cx - ws.reduce((a, b) => a + b, 0) / 2;
+  const pos = [];
+  items.forEach((it, i) => {
+    const w = ws[i], p = it.p == null ? 1 : it.p, col = it.color || opt.color || C.ink, xc = x + w / 2;
+    pos.push({ x: xc, y: mid, w });
+    if (p > 0) {
+      if (it.t != null) {
+        const s = popScale(p);
+        withT(xc, base, s, 0, () => { ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.fillText(it.t, 0, 0); });
+      } else if (it.op === "×") drawTimes(xc, mid, size * 0.4, p, col, size * 0.085);
+      else if (it.op === "·") drawDot(xc, mid, size * 0.075, p, col);
+      else if (it.op === "=") { strokeSeg(xc - size * 0.25, mid - size * 0.11, xc + size * 0.25, mid - size * 0.11, prog(p, 0, .5), col, size * 0.07); strokeSeg(xc - size * 0.25, mid + size * 0.11, xc + size * 0.25, mid + size * 0.11, prog(p, .5, 1), col, size * 0.07); }
+    }
+    x += w;
+  });
+  return pos;
+}
+// 手绘圈注
+function circleMark(x, y, rx, ry, p, color, k, lw = 7) {
+  if (p <= 0) return;
+  ctx.beginPath(); const n = 48, end = p * 1.08;
+  for (let i = 0; i <= n * end; i++) {
+    const a = -Math.PI * 0.6 + i / n * Math.PI * 2, wob = 1 + 0.05 * Math.sin(i * 0.7 + k) + jit(k + i, 0.006);
+    const X = x + Math.cos(a) * rx * wob, Y = y + Math.sin(a) * ry * wob;
+    i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+}
+function arrow(x1, y1, x2, y2, p, color, lw = 6) {
+  if (p <= 0) return;
+  const X = lerp(x1, x2, p), Y = lerp(y1, y2, p), a = Math.atan2(y2 - y1, x2 - x1);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo((x1 + X) / 2 + (Y - y1) * 0.15, (y1 + Y) / 2 - (X - x1) * 0.15, X, Y);
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+  if (p > 0.6) { ctx.beginPath(); ctx.moveTo(X - Math.cos(a - 0.5) * 24, Y - Math.sin(a - 0.5) * 24); ctx.lineTo(X, Y); ctx.lineTo(X - Math.cos(a + 0.5) * 24, Y - Math.sin(a + 0.5) * 24); ctx.stroke(); }
+}
+function label(text, x, y, size, color, p = 1, align = "center", w = 500) {
+  if (p <= 0) return;
+  font(size, w);
+  withT(x, y, popScale(p), 0, () => { ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 0); });
+}
+// 胶囊标签
+function pill(text, x, y, size, bg, fg, p = 1, k = 1) {
+  if (p <= 0) return;
+  font(size); const w = ctx.measureText(text).width + size * 1.4, h = size * 1.7;
+  withT(x, y, popScale(p), jit(k, 0.004), () => {
+    roughRect(-w / 2, -h / 2, w, h, h / 2, k, 1.2); ctx.fillStyle = bg; ctx.fill();
+    ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 2);
+  });
+}
+// 逐字弹出的文字
+function popText(text, x, y, size, color, t0, t, step = 0.08, w = 500) {
+  font(size, w);
+  const chars = [...text], ws = chars.map(c => ctx.measureText(c).width), tw = ws.reduce((a, b) => a + b, 0);
+  let cx = x - tw / 2;
+  chars.forEach((c, i) => {
+    const p = prog(t, t0 + i * step, t0 + i * step + 0.45);
+    if (p > 0) withT(cx + ws[i] / 2, y, popScale(p), (1 - eOut(p)) * 0.3 * (i % 2 ? 1 : -1), () => {
+      ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(c, 0, 0);
+    });
+    cx += ws[i];
+  });
+  return tw;
+}
+
+// ---------- 背景 ----------
+let paperTex = null;
+function makePaper() {
+  paperTex = document.createElement("canvas"); paperTex.width = W; paperTex.height = H;
+  const g = paperTex.getContext("2d"), r = rng(7);
+  for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(120,85,40,${r() * 0.07})`; g.fillRect(r() * W, r() * H, 1 + r() * 2, 1 + r() * 2); }
+  for (let i = 0; i < 260; i++) {
+    const x = r() * W, y = r() * H, a = r() * Math.PI, l = 20 + r() * 60;
+    g.strokeStyle = `rgba(140,100,50,${0.03 + r() * 0.05})`; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+}
+// ---------- 角色与道具 ----------
+// 头像框里的人物剪影（不画真实相貌，避免“以假乱真”）
+function portrait(x, y, s, kind, k) {
+  withT(x, y, s, 0, () => {
+    ctx.save();
+    roughRect(-130, -160, 260, 320, 120, k, 1.2); ctx.fillStyle = "#f7e7c6"; ctx.fill();
+    ctx.lineWidth = 12; ctx.strokeStyle = C.gold; ctx.stroke(); ctx.lineWidth = 3; ctx.strokeStyle = C.brown; ctx.stroke();
+    roughRect(-118, -148, 236, 296, 110, k + 5, 0.8); ctx.clip();
+    const body = "#5b4232", skin = "#d9b48a";
+    ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 175, 125, 95, 0, 0, Math.PI * 2); ctx.fill();
+    if (kind === "leibniz") { // 长卷发假发
+      ctx.fillStyle = "#4a3426";
+      for (let i = 0; i < 14; i++) { const a = Math.PI * (0.05 + i / 13 * 0.9), r = 74; ctx.beginPath(); ctx.arc(Math.cos(a) * r * (i < 7 ? -1 : 1) * (i < 7 ? 1 : 1), -20 + Math.sin(a) * 0 + (i % 7) * 22 - 50, 30, 0, Math.PI * 2); ctx.fill(); }
+      ctx.beginPath(); ctx.ellipse(0, -55, 82, 70, 0, Math.PI, 0); ctx.fill();
+    }
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.ellipse(0, -30, 52, 64, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-20, 20, 40, 40);
+    if (kind === "oughtred") { // 黑色小帽、胡须、白色领口
+      ctx.fillStyle = "#2d2420"; ctx.beginPath(); ctx.ellipse(0, -72, 56, 30, 0, Math.PI, 0); ctx.fill(); ctx.fillRect(-56, -74, 112, 10);
+      ctx.fillStyle = "#e9e1d3"; ctx.beginPath(); ctx.moveTo(-26, 4); ctx.quadraticCurveTo(0, 62, 26, 4); ctx.quadraticCurveTo(0, 30, -26, 4); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(-70, 70); ctx.lineTo(0, 52); ctx.lineTo(70, 70); ctx.lineTo(40, 100); ctx.lineTo(0, 82); ctx.lineTo(-40, 100); ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(-18, 60); ctx.lineTo(0, 110); ctx.lineTo(18, 60); ctx.closePath(); ctx.fill();
+    }
+    // 简笔五官
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(-18, -36, 4.5, 0, 7); ctx.arc(18, -36, 4.5, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#9b6a4a"; ctx.lineWidth = 3.5; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, -8, 14, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke();
+    ctx.restore();
+  });
+}
+function nameCard(x, y, p, kind, title, latin, info, k) {
+  if (p <= 0) return;
+  const a = eOut(p);
+  ctx.save(); ctx.globalAlpha *= a;
+  withT(x, y + (1 - a) * 40, 1, 0, () => {
+    card(-210, -300, 420, 600, k, "rgba(255,250,238,0.95)", C.brown, 4);
+    portrait(0, -95, 0.95, kind, k + 3);
+    label(title, 0, 140, 58, C.ink);
+    if (latin) label(latin, 0, 200, 30, C.inkSoft);
+    if (info) label(info, 0, 248, 30, C.inkSoft);
+  });
+  ctx.restore();
+}
+function yearBadge(text, x, y, p, k) {
+  if (p <= 0) return;
+  const s = p < 1 ? lerp(2.2, 1, eOut(p)) : 1;
+  ctx.save(); ctx.globalAlpha *= clamp(p * 3);
+  withT(x, y, s, -0.08, () => {
+    roughRect(-150, -58, 300, 116, 18, k, 1.5); ctx.fillStyle = "rgba(196,60,40,0.10)"; ctx.fill();
+    ctx.lineWidth = 7; ctx.strokeStyle = "#b8412c"; ctx.stroke();
+    font(72); ctx.fillStyle = "#b8412c"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 4);
+  });
+  ctx.restore();
+}
+function book(x, y, s, r, k) {
+  withT(x, y, s, r, () => {
+    ctx.fillStyle = "rgba(60,30,10,0.25)"; roughRect(-185, -235, 390, 490, 18, k + 50, 1); ctx.fill();
+    ctx.fillStyle = "#efe2c2"; ctx.fillRect(-165, -238, 345, 470); // 书页侧边
+    roughRect(-200, -250, 380, 480, 16, k, 1.2); ctx.fillStyle = C.leather; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "#4e2512"; ctx.stroke();
+    ctx.fillStyle = "#5e2c15"; ctx.fillRect(-200, -246, 34, 472);
+    roughRect(-140, -210, 290, 400, 10, k + 9, 1); ctx.lineWidth = 5; ctx.strokeStyle = C.gold; ctx.stroke();
+    font(46); ctx.fillStyle = C.gold; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("CLAVIS", 5, -140); font(34); ctx.fillText("MATHEMATICAE", 5, -88);
+    // 钥匙图案
+    withT(5, 50, 1, -0.6, () => {
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 11; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(0, -60, 34, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -26); ctx.lineTo(0, 90); ctx.moveTo(0, 60); ctx.lineTo(26, 60); ctx.moveTo(0, 84); ctx.lineTo(22, 84); ctx.stroke();
+    });
+    font(30); ctx.fillStyle = "#e8c98a"; ctx.fillText("1631", 5, 165);
+  });
+}
+function quill(x, y, r, s = 1) {
+  withT(x, y, s, r, () => {
+    ctx.fillStyle = "#fffaf0"; ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(30, -90, 95, -230); ctx.quadraticCurveTo(70, -120, 0, 0); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(-10, -110, 95, -230); ctx.quadraticCurveTo(20, -100, 0, 0); ctx.fillStyle = "#f2e6cc"; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(92, -226); ctx.strokeStyle = C.brown; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.moveTo(-3, 4); ctx.lineTo(6, -16); ctx.lineTo(-2, -14); ctx.fill();
+  });
+}
+function scribble(x, y, w, lines, p, k, color = "#6b5240") { // 信纸上的“手写字”
+  ctx.strokeStyle = color; ctx.lineWidth = 3.2; ctx.lineCap = "round";
+  for (let l = 0; l < lines; l++) {
+    const lp = prog(p, l / lines, (l + 1) / lines); if (lp <= 0) continue;
+    const r = rng(k + l), lw = w * (l === lines - 1 ? 0.55 : 0.85 + r() * 0.15);
+    ctx.beginPath();
+    for (let i = 0; i <= lw * lp; i += 4) { const yy = y + l * 46 + Math.sin(i * 0.21 + r() * 0.5) * 7 * (0.6 + 0.4 * Math.sin(i * 0.037)); i ? ctx.lineTo(x + i, yy) : ctx.moveTo(x + i, yy); }
+    ctx.stroke();
+  }
+}
+function apple(x, y, r, p) {
+  if (p <= 0) return;
+  withT(x, y, popScale(p), 0, () => {
+    ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(0, -r * 0.7);
+    ctx.bezierCurveTo(r * 1.1, -r * 1.25, r * 1.35, r * 0.55, 0, r); ctx.bezierCurveTo(-r * 1.35, r * 0.55, -r * 1.1, -r * 1.25, 0, -r * 0.7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.beginPath(); ctx.ellipse(-r * 0.42, -r * 0.2, r * 0.16, r * 0.3, 0.4, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#6b4226"; ctx.lineWidth = r * 0.12; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(0, -r * 0.7); ctx.lineTo(r * 0.1, -r * 1.1); ctx.stroke();
+    ctx.fillStyle = "#58a65c"; ctx.beginPath(); ctx.ellipse(r * 0.35, -r * 1.02, r * 0.3, r * 0.14, -0.5, 0, 7); ctx.fill();
+  });
+}
+function sparkle(x, y, s, p, color = C.yellow) {
+  if (p <= 0 || p >= 1) return;
+  const a = Math.sin(p * Math.PI), sc = s * (0.4 + p);
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = color;
+  withT(x, y, sc, p * 2, () => { ctx.beginPath(); for (let i = 0; i < 8; i++) { const r = i % 2 ? 6 : 22, an = i / 8 * Math.PI * 2; ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r); } ctx.fill(); });
+  ctx.restore();
+}
+// 顶部小时间线：1631 —— 1698 —— 今天
+function miniTimeline(t, alpha) {
+  if (alpha <= 0) return;
+  const X = { 1631: 700, 1698: 860, now: 1220 }, y = 74;
+  let mx;
+  const o = SC.oughtred, l = SC.letter, td = SC.today;
+  if (t < SG.s8.start) mx = X[1631];
+  else if (t < td.start) mx = lerp(X[1631], X[1698], eInOut(prog(t, SG.s8.start - 0.2, SG.s8.start + 0.8)));
+  else mx = lerp(X[1698], X.now, eInOut(prog(t, td.start + 0.1, td.start + 1.2)));
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 4; ctx.setLineDash([2, 12]); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(620, y); ctx.lineTo(1300, y); ctx.stroke(); ctx.setLineDash([]);
+  [[X[1631], "1631年"], [X[1698], "1698年"], [X.now, "今天"]].forEach(([x, s]) => {
+    ctx.fillStyle = C.inkSoft; ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill(); label(s, x, y + 38, 28, C.inkSoft);
+  });
+  ctx.fillStyle = C.red; ctx.beginPath(); ctx.arc(mx, y, 14 + Math.sin(t * 5) * 1.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.stroke();
+  ctx.restore();
+}
+
+function sepiaAt(t) { // 历史部分用旧纸色，“沿用至今”时回到彩色
+  return prog(t, SC.egypt.start - 0.2, SC.egypt.start + 1.0) * (1 - prog(t, SG.s9.start - 0.3, SG.s9.start + 0.9));
+}
+function background(t) {
+  const s = sepiaAt(t);
+  ctx.fillStyle = mix(C.cream, C.sepia, s); ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 0.35 + s * 0.65; ctx.drawImage(paperTex, 0, 0); ctx.globalAlpha = 1;
+  if (s > 0) {
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+    g.addColorStop(0, "rgba(90,55,20,0)"); g.addColorStop(1, `rgba(90,55,20,${0.38 * s})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  // 漂浮的小分数（现代场景）
+  const fl = 1 - s;
+  if (fl > 0) {
+    const r = rng(11), list = [[1, 2], [3, 4], [1, 3], [2, 5], [1, 4], [5, 8], [2, 3], [1, 10]];
+    for (let i = 0; i < 22; i++) {
+      const x0 = r() * W, y0 = r() * H, sp = 8 + r() * 14, ph = r() * 6.28, sz = 34 + r() * 30, col = [C.orange, C.teal, C.blue, C.yellow][i % 4], [n, d] = list[i % list.length];
+      const x = (x0 + t * sp) % (W + 100) - 50, y = y0 + Math.sin(t * 0.6 + ph) * 18;
+      ctx.globalAlpha = 0.10 * fl;
+      withT(x, y, 1, Math.sin(t * 0.4 + ph) * 0.25, () => frac(n, d, 0, 0, sz, { color: col }));
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------- 分数与古代记号 ----------
+// 分数：分子在上、分母在下，cy 为分数线位置；opt.bar = 分数线画出进度（0 表示没有分数线），opt.pn / opt.pd = 分子、分母出现进度
+function frac(n, d, cx, cy, size, opt = {}) {
+  const col = opt.color || C.ink, gap = opt.gap ?? size * 0.16;
+  font(size);
+  const asc = ctx.measureText("8").actualBoundingBoxAscent, wn = ctx.measureText(String(n)).width, wd = ctx.measureText(String(d)).width;
+  const bw = Math.max(wn, wd) + size * 0.32, bar = opt.bar ?? 1;
+  const put = (s, y, p) => { if (p > 0) withT(cx, y, popScale(p), 0, () => { ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.fillText(String(s), 0, asc / 2); }); };
+  put(n, cy - gap - asc / 2, opt.pn ?? 1);
+  put(d, cy + gap + asc / 2, opt.pd ?? 1);
+  if (bar > 0) strokeSeg(cx - bw / 2, cy, cx - bw / 2 + bw * bar, cy, 1, opt.barColor || col, size * 0.075);
+  return { w: bw, top: cy - gap - asc, bot: cy + gap + asc };
+}
+// 古埃及表示“几分之一”的卵形记号（象形文字 r，“嘴”）
+function egyOval(cx, cy, w, h, p, k = 1) {
+  if (p <= 0) return;
+  const dp = prog(p, 0, 0.7), fp = prog(p, 0.5, 1);
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(196,92,58,${0.85 * fp})`; ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, cy, w / 2, h / 2, 0, Math.PI, Math.PI + Math.PI * 2 * dp);
+  ctx.strokeStyle = "#5a2a1a"; ctx.lineWidth = Math.max(4, h * 0.09); ctx.lineCap = "round"; ctx.stroke();
+  ctx.restore();
+}
+// 象形数字：竖线表示 1~9，“∩”（牛轭）表示 10
+function egyNum(v, cx, cy, s, p, color = "#2f3e5c") {
+  if (p <= 0) return;
+  ctx.strokeStyle = color; ctx.lineWidth = s * 0.13; ctx.lineCap = "round";
+  if (v === 10) { // 左腿向上 → 半圆拱 → 右腿向下，按笔画长度画出
+    const w = s * 0.62, r = w / 2, y0 = cy - s / 2 + r, leg = s - r, L = 2 * leg + Math.PI * r, q = eOut(p) * L;
+    ctx.beginPath(); ctx.moveTo(cx - r, cy + s / 2);
+    ctx.lineTo(cx - r, cy + s / 2 - Math.min(q, leg));
+    if (q > leg) ctx.arc(cx, y0, r, Math.PI, Math.PI + Math.min(q - leg, Math.PI * r) / r);
+    if (q > leg + Math.PI * r) ctx.lineTo(cx + r, y0 + (q - leg - Math.PI * r));
+    ctx.stroke();
+  } else {
+    const sp = s * 0.3;
+    for (let i = 0; i < v; i++) {
+      const q = prog(p, i / v, (i + 1) / v), x = cx + (i - (v - 1) / 2) * sp;
+      strokeSeg(x, cy - s / 2, x, cy - s / 2 + s * eOut(q), q > 0 ? 1 : 0, color, s * 0.13);
+    }
+  }
+}
+// 算筹：一根竹签
+function rod(cx, cy, len, p, k) {
+  if (p <= 0) return;
+  const q = eOut(p), y = cy - (1 - q) * 160, a = clamp(p * 3);
+  ctx.save(); ctx.globalAlpha *= a;
+  withT(cx, y, 1, (1 - q) * 0.5 * (k % 2 ? 1 : -1), () => {
+    ctx.fillStyle = "rgba(70,40,10,0.22)"; roughRect(-7, -len / 2 + 6, 18, len, 8, k + 9, 0.5); ctx.fill();
+    roughRect(-9, -len / 2, 18, len, 8, k, 0.6); ctx.fillStyle = "#dcb36a"; ctx.fill(); ctx.strokeStyle = "#8a6430"; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.fillRect(-5, -len / 2 + 8, 4, len - 16);
+    [-0.18, 0.22].forEach(f => strokeSeg(-8, len * f, 8, len * f, 1, "#a87b3c", 2.5));
+  });
+  ctx.restore();
+}
+// 摆算筹的小朋友（古装，头顶小发髻）
+function kid(x, y, s, t) {
+  withT(x, y, s, Math.sin(t * 2) * 0.02, () => {
+    ctx.fillStyle = "#2a9d8f"; ctx.beginPath(); ctx.moveTo(-95, 210); ctx.quadraticCurveTo(-90, 60, 0, 50); ctx.quadraticCurveTo(90, 60, 95, 210); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = "#f3e7cf"; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(-30, 58); ctx.lineTo(22, 130); ctx.moveTo(30, 58); ctx.lineTo(-6, 104); ctx.stroke();
+    ctx.fillStyle = "#3b2f2a"; ctx.beginPath(); ctx.arc(0, -98, 30, 0, 7); ctx.fill();
+    ctx.fillStyle = "#e9c29b"; ctx.beginPath(); ctx.arc(0, -20, 74, 0, 7); ctx.fill();
+    ctx.fillStyle = "#3b2f2a"; ctx.beginPath(); ctx.arc(0, -36, 76, Math.PI * 1.05, Math.PI * 1.95); ctx.fill();
+    const blink = (t % 3.2) < 0.12 ? 0.15 : 1;
+    ctx.beginPath(); ctx.ellipse(-26, -14, 7, 9 * blink, 0, 0, 7); ctx.ellipse(26, -14, 7, 9 * blink, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(240,120,100,0.45)"; ctx.beginPath(); ctx.arc(-46, 10, 12, 0, 7); ctx.arc(46, 10, 12, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#9b5a3a"; ctx.lineWidth = 5; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, 8, 18, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  });
+}
+// 时代印章：大字 + 小字地名
+function eraBadge(text, place, x, y, p, k) {
+  if (p <= 0) return;
+  const s = p < 1 ? lerp(2.0, 1, eOut(p)) : 1;
+  ctx.save(); ctx.globalAlpha *= clamp(p * 3);
+  withT(x, y, s, -0.06, () => {
+    font(56); const w = ctx.measureText(text).width + 70;
+    roughRect(-w / 2, -50, w, 100, 16, k, 1.5); ctx.fillStyle = "rgba(196,60,40,0.10)"; ctx.fill(); ctx.lineWidth = 6; ctx.strokeStyle = "#b8412c"; ctx.stroke();
+    ctx.fillStyle = "#b8412c"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 3);
+  });
+  ctx.restore();
+  pill(place, x, y + 92, 38, C.brown, "#fff8e8", prog(p, 0.4, 1), k + 1);
+}
+function papyrus(cx, cy, w, h, p, k) {
+  if (p <= 0) return;
+  const ww = w * eInOut(p);
+  ctx.save();
+  ctx.fillStyle = "rgba(70,40,10,0.18)"; ctx.fillRect(cx - ww / 2 + 10, cy - h / 2 + 14, ww, h);
+  ctx.fillStyle = "#efdcae"; ctx.fillRect(cx - ww / 2, cy - h / 2, ww, h);
+  ctx.beginPath(); ctx.rect(cx - ww / 2, cy - h / 2, ww, h); ctx.clip();
+  const r = rng(k);
+  for (let i = 0; i < 40; i++) { const y = cy - h / 2 + r() * h; ctx.strokeStyle = `rgba(150,110,50,${0.06 + r() * 0.08})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx - w / 2, y); ctx.lineTo(cx + w / 2, y + jit(k + i, 1)); ctx.stroke(); }
+  for (let i = 0; i < 16; i++) { const x = cx - w / 2 + r() * w; ctx.strokeStyle = `rgba(150,110,50,${0.04 + r() * 0.05})`; ctx.beginPath(); ctx.moveTo(x, cy - h / 2); ctx.lineTo(x, cy + h / 2); ctx.stroke(); }
+  ctx.restore();
+  [-1, 1].forEach(sd => { // 卷轴两端
+    const x = cx + sd * ww / 2;
+    const g = ctx.createLinearGradient(x - 22, 0, x + 22, 0); g.addColorStop(0, "#c9a86a"); g.addColorStop(0.5, "#f3e2b6"); g.addColorStop(1, "#b48f52");
+    ctx.fillStyle = g; roughRect(x - 22, cy - h / 2 - 18, 44, h + 36, 20, k + sd + 5, 0.8); ctx.fill(); ctx.strokeStyle = "#8a6430"; ctx.lineWidth = 3; ctx.stroke();
+  });
+}
+function pyramids(p) {
+  if (p <= 0) return;
+  const dy = (1 - eOut(p)) * 220;
+  ctx.save(); ctx.globalAlpha *= 0.9;
+  [[190, 900, 330], [400, 900, 220], [1720, 900, 300], [1530, 900, 190]].forEach(([x, y, s]) => {
+    ctx.fillStyle = "#d8b878"; ctx.beginPath(); ctx.moveTo(x - s * 0.62, y + dy); ctx.lineTo(x, y - s * 0.7 + dy); ctx.lineTo(x + s * 0.62, y + dy); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#c39c58"; ctx.beginPath(); ctx.moveTo(x, y - s * 0.7 + dy); ctx.lineTo(x + s * 0.62, y + dy); ctx.lineTo(x + s * 0.12, y + dy); ctx.closePath(); ctx.fill();
+  });
+  ctx.fillStyle = "rgba(240,190,90,0.55)"; ctx.beginPath(); ctx.arc(1700, 300 + dy, 60, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function palmLeaf(cx, cy, w, h, p, k) { // 印度的贝叶（棕榈叶）写本
+  if (p <= 0) return;
+  const a = eOut(p);
+  ctx.save(); ctx.globalAlpha *= a;
+  withT(cx, cy + (1 - a) * 60, 1, -0.02, () => {
+    ctx.fillStyle = "rgba(70,40,10,0.2)"; roughRect(-w / 2 + 10, -h / 2 + 14, w, h, h / 2, k + 3, 1); ctx.fill();
+    roughRect(-w / 2, -h / 2, w, h, h / 2, k, 1.2); ctx.fillStyle = "#e6cf93"; ctx.fill(); ctx.strokeStyle = "#9a7a3c"; ctx.lineWidth = 4; ctx.stroke();
+    ctx.fillStyle = "#6b5240"; [-w * 0.3, w * 0.3].forEach(x => { ctx.beginPath(); ctx.arc(x, 0, 9, 0, 7); ctx.fill(); });
+    ctx.strokeStyle = "rgba(150,115,55,0.35)"; ctx.lineWidth = 2;
+    for (let i = 1; i < 6; i++) { const y = -h / 2 + i * h / 6; ctx.beginPath(); ctx.moveTo(-w / 2 + h / 2, y); ctx.lineTo(w / 2 - h / 2, y); ctx.stroke(); }
+  });
+  ctx.restore();
+}
+function domes(p) { // 阿拉伯风格的圆顶与拱门剪影
+  if (p <= 0) return;
+  const dy = (1 - eOut(p)) * 240;
+  ctx.save(); ctx.fillStyle = "rgba(150,105,55,0.30)";
+  const dome = (x, w, h) => { ctx.beginPath(); ctx.moveTo(x - w / 2, 940 + dy); ctx.lineTo(x - w / 2, 940 - h + dy); ctx.quadraticCurveTo(x - w / 2, 940 - h - w * 0.75 + dy, x, 940 - h - w * 0.95 + dy); ctx.quadraticCurveTo(x + w / 2, 940 - h - w * 0.75 + dy, x + w / 2, 940 - h + dy); ctx.lineTo(x + w / 2, 940 + dy); ctx.fill(); };
+  dome(220, 180, 220); dome(390, 110, 160); ctx.fillRect(470, 520 + dy, 34, 420); dome(487, 46, 420);
+  dome(1700, 190, 230); dome(1530, 120, 150); ctx.fillRect(1420, 480 + dy, 34, 460); dome(1437, 46, 460);
+  ctx.restore();
+}
+// 顶部时间线：古埃及 → 中国 → 印度 → 阿拉伯 → 今天
+function topTimeline(t, alpha) {
+  if (alpha <= 0) return;
+  const stops = [["古埃及", "egypt"], ["中国", "china"], ["印度", "india"], ["阿拉伯", "arab"], ["今天", "s9"]];
+  const xs = stops.map((_, i) => 600 + i * 180), y = 74;
+  const starts = stops.map(([, id]) => (SC[id] || SG[id]).start);
+  let mx = xs[0];
+  for (let i = 1; i < stops.length; i++) mx = lerp(mx, xs[i], eInOut(prog(t, starts[i] - 0.3, starts[i] + 0.7)));
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 4; ctx.setLineDash([2, 12]); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(xs[0] - 60, y); ctx.lineTo(xs[xs.length - 1] + 60, y); ctx.stroke(); ctx.setLineDash([]);
+  stops.forEach(([s], i) => { ctx.fillStyle = C.inkSoft; ctx.beginPath(); ctx.arc(xs[i], y, 7, 0, 7); ctx.fill(); label(s, xs[i], y + 38, 28, C.inkSoft); });
+  ctx.fillStyle = C.red; ctx.beginPath(); ctx.arc(mx, y, 14 + Math.sin(t * 5) * 1.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- 各场景 ----------
+const scenes = {
+  title(lt, g, t) {
+    const s0 = g("s0");
+    pill("数学小故事", W / 2, 110, 40, C.teal, "#fff", prog(lt, 0.2, 0.7), 3);
+    withT(W / 2, 330, 1 + 0.04 * Math.sin(lt * 2.4) * prog(lt, 1.4, 1.8), 0, () =>
+      frac(1, 2, 0, 0, 130, { color: C.orange, pn: prog(lt, 0.2, 0.6), pd: prog(lt, 0.4, 0.8), bar: eOut(prog(lt, 0.7, 1.2)) }));
+    popText("分数的由来", W / 2, 560, 140, C.ink, 0.9, lt, 0.11);
+    // 一条蜿蜒的长路，路上依次出现四种写法
+    const rp = eInOut(prog(lt, s0 + 0.2, s0 + 2.6));
+    const path = u => [240 + u * 1440, 830 + Math.sin(u * Math.PI * 2.2) * 50];
+    if (rp > 0) {
+      ctx.strokeStyle = "rgba(122,102,86,0.55)"; ctx.lineWidth = 10; ctx.setLineDash([4, 22]); ctx.lineCap = "round";
+      ctx.beginPath(); for (let i = 0; i <= 100 * rp; i++) { const [x, y] = path(i / 100); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); ctx.setLineDash([]);
+    }
+    const icons = [
+      (x, y) => { egyOval(x, y - 34, 74, 30, 1); egyNum(4, x, y + 22, 54, 1); },
+      (x, y) => { rod(x, y - 42, 50, 1, 1); [-2, -1, 0, 1, 2].forEach((i, j) => rod(x + i * 13, y + 26, 50, 1, j + 2)); },
+      (x, y) => frac(1, 5, x, y, 46, { bar: 0 }),
+      (x, y) => frac(1, 5, x, y, 46, { color: C.orange }),
+    ];
+    icons.forEach((fn, i) => {
+      const u = 0.12 + i * 0.25, p = prog(lt, s0 + 0.5 + i * 0.5, s0 + 1.0 + i * 0.5);
+      if (p <= 0) return;
+      const [x, y] = path(u);
+      withT(x, y - 70, popScale(p), 0, () => { ctx.fillStyle = "rgba(255,252,242,0.95)"; roughRect(-62, -62, 124, 124, 24, 20 + i, 1.2); ctx.fill(); ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 3; ctx.stroke(); fn(0, 0); });
+    });
+  },
+  egypt(lt, g, t) {
+    const s1 = g("s1"), s2 = g("s2"), s3 = g("s3");
+    pyramids(prog(lt, 0.1, 1.2));
+    papyrus(W / 2, 500, 1060, 560, prog(lt, 0.2, 1.2), 31);
+    eraBadge("3000多年前", "古埃及", 250, 170, prog(lt, s1, s1 + 0.5), 32);
+    // 卵形记号先单独出现：表示“分子是 1”
+    const ovIn = prog(lt, s1 + 2.6, s1 + 3.4), split = eInOut(prog(lt, s2 + 0.2, s2 + 1.2)), seat = eInOut(prog(lt, s2 + 3.0, s2 + 3.8));
+    const solo = 1 - prog(lt, s2 + 0.1, s2 + 0.5);
+    if (solo > 0) {
+      ctx.save(); ctx.globalAlpha *= solo;
+      egyOval(W / 2, 420, 260, 104, ovIn);
+      label("卵形记号", W / 2, 520, 44, C.brown, prog(lt, s1 + 3.2, s1 + 3.7));
+      const fp = prog(lt, s1 + 4.6, s1 + 5.2);
+      if (fp > 0) {
+        arrow(W / 2 + 160, 420, W / 2 + 300, 420, fp, C.red);
+        withT(W / 2 + 400, 430, popScale(fp), 0, () => frac(1, "?", 0, 0, 90, { color: C.ink }));
+        pill("分子是 1", W / 2 + 400, 620, 40, C.red, "#fff", prog(lt, s1 + 5.0, s1 + 5.5), 33);
+      }
+      ctx.restore();
+    }
+    // 两个记号 + 象形数字 4（||||）和 10（∩）
+    if (split > 0) {
+      [[-1, 4, "4"], [1, 10, "10"]].forEach(([sd, v, txt], i) => {
+        const x = W / 2 + sd * 230, ny = 560;
+        const oy = lerp(330, ny - 120, seat);
+        egyOval(lerp(W / 2, x, split), oy, 190, 76, split);
+        const np = prog(lt, s2 + 1.0 + i * 0.5, s2 + 1.8 + i * 0.5);
+        egyNum(v, x, ny, 120, np);
+        label(`象形数字 ${txt}`, x, ny + 120, 34, C.inkSoft, prog(lt, s2 + 1.4 + i * 0.5, s2 + 1.9 + i * 0.5) * (1 - prog(lt, s3 + 0.6, s3 + 1.0)));
+        // 等于现代写法
+        const mp = prog(lt, s3 + 1.2 + i * 1.5, s3 + 1.8 + i * 1.5);
+        if (mp > 0) {
+          label("=", x - 70, ny + 150, 70, C.ink, mp);
+          withT(x + 30, ny + 150, popScale(mp), 0, () => frac(1, v, 0, 0, 72, { color: C.orange }));
+        }
+      });
+      const bp = prog(lt, s2 + 3.6, s2 + 4.4);
+      if (bp > 0 && bp < 1) [[W / 2 - 230, 440], [W / 2 + 230, 440]].forEach(([x, y], i) => sparkle(x + 110, y - 40, 1.2, bp, i ? C.yellow : C.orange));
+    }
+  },
+  china(lt, g, t) {
+    const s4 = g("s4"), s5 = g("s5");
+    eraBadge("2000多年前", "中国", 250, 170, prog(lt, s4, s4 + 0.5), 41);
+    // 木桌
+    const tp = eOut(prog(lt, 0.1, 0.9));
+    ctx.save(); ctx.globalAlpha *= tp;
+    roughRect(560, 300 + (1 - tp) * 80, 980, 560, 30, 42, 1.2); ctx.fillStyle = "#b07a46"; ctx.fill(); ctx.strokeStyle = "#6e4523"; ctx.lineWidth = 5; ctx.stroke();
+    const r = rng(43); ctx.strokeStyle = "rgba(90,55,25,0.25)"; ctx.lineWidth = 3;
+    for (let i = 0; i < 14; i++) { const y = 330 + r() * 500; ctx.beginPath(); ctx.moveTo(590, y); ctx.bezierCurveTo(900, y + 20 * (r() - 0.5), 1200, y + 30 * (r() - 0.5), 1510, y); ctx.stroke(); }
+    ctx.restore();
+    kid(350, 640, 1.15, lt);
+    // 摆算筹：上面 1 根，下面 5 根
+    const r0 = s4 + 2.4, st = 0.32, cx = 960;
+    rod(cx, 460, 150, prog(lt, r0, r0 + 0.35), 1);
+    for (let i = 0; i < 5; i++) rod(cx + (i - 2) * 40, 690, 150, prog(lt, r0 + (i + 1) * st, r0 + (i + 1) * st + 0.35), i + 2);
+    const cp = prog(lt, s5 + 0.3, s5 + 0.8);
+    if (cp > 0) {
+      [[460, "1", "上面 1 根"], [690, "5", "下面 5 根"]].forEach(([y, n, tx], i) => {
+        const p = prog(cp, i * 0.3, 1);
+        withT(cx + 170, y, popScale(p), 0, () => { ctx.fillStyle = C.yellow; ctx.beginPath(); ctx.arc(0, 0, 40, 0, 7); ctx.fill(); ctx.strokeStyle = C.ink; ctx.lineWidth = 4; ctx.stroke(); });
+        label(n, cx + 170, y + 2, 56, C.ink, p);
+        label(tx, cx + 300, y, 34, "#fff8e8", p);
+      });
+    }
+    const fp = prog(lt, s5 + 1.9, s5 + 2.5);
+    if (fp > 0) {
+      label("=", 1580, 575, 90, C.ink, fp);
+      withT(1720, 575, popScale(fp), 0, () => { ctx.fillStyle = "rgba(255,252,242,0.95)"; roughRect(-95, -150, 190, 300, 26, 44, 1.2); ctx.fill(); ctx.strokeStyle = C.orange; ctx.lineWidth = 5; ctx.stroke(); frac(1, 5, 0, 0, 100, { color: C.orange }); });
+    }
+  },
+  india(lt, g, t) {
+    const s6 = g("s6"), s7 = g("s7");
+    eraBadge("又过了五六百年", "印度", 300, 170, prog(lt, s6, s6 + 0.5), 51);
+    palmLeaf(W / 2, 540, 1200, 330, prog(lt, 0.2, 1.0), 52);
+    scribble(W / 2 - 520, 440, 300, 4, prog(lt, 0.8, 2.6), 53, "rgba(80,55,35,0.75)");
+    scribble(W / 2 + 230, 440, 300, 4, prog(lt, 1.2, 3.0), 54, "rgba(80,55,35,0.75)");
+    const dp = prog(lt, s6 + 2.6, s6 + 3.4);
+    frac(1, 5, W / 2, 540, 120, { bar: 0, color: "#4a3426", pn: prog(dp, 0, 0.6), pd: prog(dp, 0.4, 1), gap: 30 });
+    // 中间没有分数线
+    const np = prog(lt, s7 - 0.2, s7 + 0.4);
+    if (np > 0) {
+      ctx.save(); ctx.globalAlpha *= np * (0.6 + 0.4 * Math.sin(lt * 6));
+      ctx.setLineDash([12, 12]); strokeSeg(W / 2 - 80, 540, W / 2 + 80, 540, 1, C.red, 6); ctx.setLineDash([]);
+      ctx.restore();
+      arrow(W / 2 + 330, 690, W / 2 + 100, 556, prog(lt, s7, s7 + 0.5), C.red);
+      pill("没有分数线", W / 2 + 430, 730, 42, C.red, "#fff", prog(lt, s7 + 0.2, s7 + 0.7), 55);
+    }
+  },
+  arab(lt, g, t) {
+    const s8 = g("s8");
+    domes(prog(lt, 0.1, 1.2));
+    eraBadge("再往后", "阿拉伯", 250, 170, prog(lt, s8, s8 + 0.5), 61);
+    const cp = eOut(prog(lt, 0.2, 0.9));
+    ctx.save(); ctx.globalAlpha *= cp;
+    card(W / 2 - 260, 260, 520, 560, 62, "rgba(255,250,238,0.96)", C.brown, 4);
+    ctx.restore();
+    const bp = eInOut(prog(lt, s8 + 2.3, s8 + 3.1));
+    const glow = Math.sin(prog(lt, s8 + 2.3, s8 + 4.0) * Math.PI);
+    if (glow > 0) { ctx.save(); ctx.shadowColor = C.yellow; ctx.shadowBlur = 40 * glow; strokeSeg(W / 2 - 90, 540, W / 2 + 90, 540, bp, C.yellow, 22 * glow); ctx.restore(); }
+    frac(1, 5, W / 2, 540, 140, { color: "#4a3426", bar: bp, barColor: C.orange, gap: 30 });
+    for (let i = 0; i < 6; i++) sparkle(W / 2 - 150 + i * 60, 540 + (i % 2 ? -50 : 50), 1.0, prog(lt, s8 + 2.8 + i * 0.06, s8 + 3.6 + i * 0.06), i % 2 ? C.orange : C.yellow);
+    arrow(W / 2 + 380, 680, W / 2 + 120, 552, prog(lt, s8 + 3.0, s8 + 3.5), C.orange);
+    pill("分数线", W / 2 + 450, 720, 44, C.orange, "#fff", prog(lt, s8 + 3.2, s8 + 3.7), 63);
+  },
+  today(lt, g, t) {
+    const s9 = g("s9");
+    pill("今天", W / 2, 190, 52, C.teal, "#fff", prog(lt, s9 - 0.2, s9 + 0.3), 71);
+    const ap = eOut(prog(lt, 0.0, 0.6));
+    ctx.save(); ctx.globalAlpha *= ap;
+    card(W / 2 - 560, 280, 1120, 580, 72, "#fffefa", "#8fb3d9", 4);
+    for (let y = 340; y < 840; y += 60) strokeSeg(W / 2 - 520, y, W / 2 + 520, y, 1, "rgba(156,192,230,0.45)", 2);
+    ctx.restore();
+    frac(1, 5, W / 2, 570, 150, { color: C.orange });
+    [[-380, 450, 1, 2, C.teal], [380, 450, 3, 4, C.blue], [-380, 700, 2, 3, C.red], [380, 700, 7, 10, C.brown]].forEach(([dx, y, n, d, col], i) => {
+      const p = prog(lt, s9 + 0.6 + i * 0.35, s9 + 1.1 + i * 0.35);
+      if (p > 0) withT(W / 2 + dx, y, popScale(p), jit(70 + i, 0.02), () => frac(n, d, 0, 0, 90, { color: col }));
+    });
+    for (let i = 0; i < 8; i++) sparkle(W / 2 + Math.cos(i * 0.8) * 520, 570 + Math.sin(i * 1.7) * 300, 1.2, prog(lt, s9 + 2.2 + i * 0.08, s9 + 3.0 + i * 0.08), i % 2 ? C.yellow : C.teal);
+  },
+};
+
+// ---------- 音效时间表（与画面共用同一套时刻，供混音脚本读取）----------
+function cues() {
+  const L = [], at = (sc, dt, type, gain = 1) => L.push({ t: +(SC[sc].start + dt).toFixed(3), type, gain });
+  const rel = (sc, id, d) => SG[id].start - SC[sc].start + d;
+  at("title", 0.2, "pop", 0.6); at("title", 0.4, "pop", 0.5); at("title", 0.7, "draw", 0.8);
+  for (let i = 0; i < 5; i++) at("title", 0.9 + i * 0.11, "pop", 0.5);
+  at("title", rel("title", "s0", 0.2), "whoosh", 0.5);
+  for (let i = 0; i < 4; i++) at("title", rel("title", "s0", 0.5 + i * 0.5), "tick", 0.6);
+  at("egypt", 0.2, "paper", 0.9); at("egypt", rel("egypt", "s1", 0), "stamp", 0.9);
+  at("egypt", rel("egypt", "s1", 2.6), "draw", 0.9); at("egypt", rel("egypt", "s1", 4.6), "whoosh", 0.4); at("egypt", rel("egypt", "s1", 4.8), "pop", 0.7);
+  at("egypt", rel("egypt", "s2", 0.2), "whoosh", 0.5); at("egypt", rel("egypt", "s2", 1.0), "draw", 0.7); at("egypt", rel("egypt", "s2", 1.5), "draw", 0.7);
+  at("egypt", rel("egypt", "s2", 3.0), "drop", 0.8); at("egypt", rel("egypt", "s2", 3.6), "sparkle", 0.6);
+  at("egypt", rel("egypt", "s3", 1.2), "ding", 0.6); at("egypt", rel("egypt", "s3", 2.7), "ding", 0.6);
+  at("china", 0.1, "whoosh", 0.5); at("china", rel("china", "s4", 0), "stamp", 0.9);
+  for (let i = 0; i < 6; i++) at("china", rel("china", "s4", 2.4 + i * 0.32 + 0.3), "wood", 0.9);
+  at("china", rel("china", "s5", 0.3), "pop", 0.6); at("china", rel("china", "s5", 0.6), "pop", 0.6); at("china", rel("china", "s5", 1.9), "ding", 0.7);
+  at("india", 0.2, "paper", 0.8); at("india", rel("india", "s6", 0), "stamp", 0.9); at("india", 0.8, "scratch", 0.5);
+  at("india", rel("india", "s6", 2.6), "pop", 0.6); at("india", rel("india", "s6", 3.0), "pop", 0.6); at("india", rel("india", "s7", -0.2), "wobble", 0.7);
+  at("arab", 0.1, "whoosh", 0.6); at("arab", rel("arab", "s8", 0), "stamp", 0.9);
+  at("arab", rel("arab", "s8", 2.3), "draw", 1); at("arab", rel("arab", "s8", 2.8), "sparkle", 0.9);
+  at("today", rel("today", "s9", -0.5), "forward", 0.8);
+  for (let i = 0; i < 4; i++) at("today", rel("today", "s9", 0.6 + i * 0.35), "pop", 0.5);
+  at("today", rel("today", "s9", 2.2), "tada", 1);
+  return L.sort((a, b) => a.t - b.t);
+}
+
+// ---------- 字幕：“1/4” 这样的分数竖排显示 ----------
+function subtitle(t) {
+  const sg = TL.segments.find(s => s.id !== "s0" && t >= s.start - 0.1 && t <= s.end + 0.35);
+  if (!sg) return;
+  const a = Math.min(prog(t, sg.start - 0.1, sg.start + 0.1), 1 - prog(t, sg.end + 0.15, sg.end + 0.35));
+  const size = 52, parts = sg.sub.split(/(\d+\/\d+)/).filter(Boolean);
+  font(size);
+  const ws = parts.map(p => /^\d+\/\d+$/.test(p) ? size * 0.5 * Math.max(...p.split("/").map(s => s.length)) + 26 : ctx.measureText(p).width);
+  const tw = ws.reduce((x, y) => x + y, 0), w = tw + 90, h = 104, cy = H - 52 - h / 2;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = "rgba(45,32,24,0.72)"; ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, H - 52 - h, w, h, 52); ctx.fill();
+  let x = W / 2 - tw / 2;
+  parts.forEach((p, i) => {
+    if (/^\d+\/\d+$/.test(p)) { const [n, d] = p.split("/"); frac(n, d, x + ws[i] / 2, cy, 36, { color: "#ffd27a", gap: 10 }); }
+    else { font(size); ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(p, x, cy + 3); }
+    x += ws[i];
+  });
+  ctx.restore();
+}
+
+// ---------- 主渲染 ----------
+function renderAt(t) {
+  BOIL = Math.floor(t * 8);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  background(t);
+  const XF = 0.45;
+  TL.scenes.forEach((sc, i) => {
+    const last = i === TL.scenes.length - 1;
+    if (t < sc.start || (!last && t > sc.end + XF)) return;
+    const a = Math.min(i === 0 ? 1 : prog(t, sc.start, sc.start + XF), last ? 1 : 1 - prog(t, sc.end, sc.end + XF));
+    ctx.save(); ctx.globalAlpha = a;
+    scenes[sc.id](t - sc.start, id => SG[id].start - sc.start, t);
+    ctx.restore();
+  });
+  topTimeline(t, prog(t, SC.egypt.start, SC.egypt.start + 0.6));
+  if (OPT.sub) subtitle(t);
+}
+
+function setup(tl, opt = {}) {
+  TL = tl; Object.assign(OPT, opt);
+  SC = Object.fromEntries(tl.scenes.map(s => [s.id, s])); SG = Object.fromEntries(tl.segments.map(s => [s.id, s]));
+  makePaper();
+}
+window.setup = setup; window.renderAt = renderAt; window.cues = cues;
+
+// 直接用浏览器打开时：读取时间轴并实时预览（拖动进度条可逐帧查看）
+if (!window.__RENDER__) {
+  const q = new URLSearchParams(location.search);
+  fetch("../build/timeline.json").then(r => r.json()).then(async tl => {
+    await document.fonts.load(`500 40px "WenKai"`);
+    setup(tl, { sub: q.get("sub") !== "0" });
+    const bar = document.getElementById("bar");
+    bar.innerHTML = `<input id="s" type="range" min="0" max="${tl.duration}" step="0.0333" style="width:80%"> <span id="tv"></span>`;
+    const s = document.getElementById("s"), tv = document.getElementById("tv");
+    let playing = true, t0 = performance.now(), base = 0;
+    s.oninput = () => { playing = false; renderAt(+s.value); tv.textContent = (+s.value).toFixed(2) + "s"; };
+    cv.onclick = () => { playing = !playing; base = +s.value; t0 = performance.now(); };
+    (function loop() { if (playing) { const t = (base + (performance.now() - t0) / 1000) % tl.duration; s.value = t; tv.textContent = t.toFixed(2) + "s"; renderAt(t); } requestAnimationFrame(loop); })();
+  });
+}
+</script>
+</body>
+</html>

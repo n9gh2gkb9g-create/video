@@ -5,7 +5,8 @@ import json, os, subprocess
 import numpy as np, soundfile as sf
 from scipy.signal import butter, sosfilt
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.abspath(os.environ.get("VIDEO_DIR", REPO))  # 视频目录，如 videos/fenshu
 SR = 48000
 R = np.random.default_rng(2026)
 
@@ -66,6 +67,9 @@ def sfx(kind):
     if kind == "draw":
         x = band(noise(0.32), 1800, 6000) * env(int(0.32 * SR), 0.03, d=0.32)
         return 0.35 * x / np.abs(x).max()
+    if kind == "wood":  # 竹签落在木桌上的“嗒”
+        return add(0.7 * tone(820, 0.12, curve=45, harm=((1, 1), (2.3, 0.4))),
+                   0.3 * band(noise(0.04), 600, 3000) * env(int(0.04 * SR), 0.001, curve=90))
     if kind == "ding":
         return add(0.5 * bell(1318.5), 0.25 * bell(1975.5, 1.2))
     if kind == "stamp":

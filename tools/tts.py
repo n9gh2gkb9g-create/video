@@ -7,7 +7,8 @@
 import argparse, json, os
 import numpy as np, soundfile as sf, sherpa_onnx as so
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.abspath(os.environ.get("VIDEO_DIR", REPO))  # 视频目录，如 videos/fenshu
 SR = 48000
 
 
@@ -43,7 +44,7 @@ class GeminiTTS:
 
     @staticmethod
     def _dotenv():
-        p = os.path.join(ROOT, ".env")
+        p = os.path.join(REPO, ".env")
         if os.path.exists(p):
             for line in open(p, encoding="utf-8"):
                 k, _, v = line.strip().partition("=")
@@ -155,7 +156,7 @@ def main():
 
     def ts(v):
         ms = int(round(v * 1000)); return f"{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}"
-    with open(os.path.join(ROOT, "output", "乘号的由来.srt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(ROOT, "output", cfg["title"] + ".srt"), "w", encoding="utf-8") as f:
         for i, g in enumerate(timeline["segments"], 1):
             f.write(f"{i}\n{ts(g['start'])} --> {ts(g['end'] + 0.25)}\n{g['sub']}\n\n")
     print(f"总时长 {t:.2f}s")

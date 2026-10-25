@@ -1,33 +1,15 @@
-# 《乘号的由来》课件微视频
+# 小学数学 · 数学史课件微视频
 
-小学数学数学史微视频，约 76 秒，1920×1080，用于省级优质课比赛课件。
+用代码画动画、Gemini 配音、逐帧渲染成 MP4，供优质课比赛课件插入使用。
 
-## 成品（`output/`）
+| 视频 | 时长 | 目录 |
+|---|---|---|
+| 《乘号的由来》 | 77 秒 | [`videos/chenghao/`](videos/chenghao/) |
+| 《分数的由来》 | 67 秒 | [`videos/fenshu/`](videos/fenshu/) |
 
-| 文件 | 用途 |
-|---|---|
-| `乘号的由来（带字幕）.mp4` | **推荐插入课件**。字幕里的 × 和 · 是单独画的，不会被看成字母 x |
-| `乘号的由来（无字幕）.mp4` | 教师现场讲解、或想自己加字幕时用 |
-| `乘号的由来.srt` | 字幕文件（剪映、PR、希沃都能导入） |
-| `音频分轨/旁白.wav、背景音乐.wav、音效.wav` | 想换配音或调音量时用 |
+每个视频目录下的 `output/` 里有：带字幕版和无字幕版 MP4、`.srt` 字幕文件、音频分轨（旁白、音乐、音效）。分镜和史实核对写在各自的 README 里。
 
 视频格式：H.264 (High@4.1, yuv420p) + AAC 48 kHz，响度 −16 LUFS，已开启 faststart。PowerPoint 2013 及以上、WPS 和希沃白板 5 都能直接嵌入播放。
-
-## 分镜（时间以成片为准）
-
-| 时间 | 旁白 | 画面 |
-|---|---|---|
-| 0:00 | 乘号的由来 | 橙色 × 一笔一笔画出，标题逐字弹出 |
-| 0:05 | 我们已经认识了乘号“×” | 3 行 × 4 列苹果 → 3 × 4 = 12，圈出 × 并标注“乘号” |
-| 0:09 | 现在，让我们把时间拨回几百年前 | 时钟倒转，时间尺从“今天”滑到 1600 年代，画面变成旧纸色 |
-| 0:17 | 1631 年……奥特雷德……《数学之钥》……用“×”表示相乘 | 1631 年印章、奥特雷德人物卡、《Clavis Mathematicae》书本，羽毛笔写出 3 × 4 |
-| 0:28 | 后来，另一个数学家……× 和 X 看起来有些像，写在一起容易认错 | 莱布尼茨人物卡，× 与 X 并排，放大镜扫过，“X × X”抖动、冒出问号 |
-| 0:41 | 1698 年，他在一封信里……用一个点，表示相乘 | 1698 年印章，信封飞入、拆开，信纸上墨点落成 3 · 4 |
-| 0:55 | 今天……写在中间的乘法点“·” | 回到彩色，作业本格线上写出 3 · 4，中线高亮，标注“写在中间” |
-| 1:03 | 原来，除了“×”，“·”也可以表示乘法 | 3 × 4 = 12 与 3 · 4 = 12 两张卡片依次高亮，“× 和 · 都可以表示乘法！” |
-| 1:10 | 符号有故事，数学真有趣！ | 结束语与 ×、·、星星彩带 |
-
-顶部小时间线（1631 → 1698 → 今天）贯穿历史部分，帮助低年级学生建立时间先后的感觉。
 
 ---
 
@@ -45,21 +27,22 @@
 | 版权 / 合规 | 图形、音乐、音效都由代码生成，字体 OFL，**无版权风险**；配音为 AI 合成，赛事要求申报时如实说明即可 | 需按《人工智能生成合成内容标识办法》（2025 年 9 月 1 日起施行）标识；部分赛事要求申报 AI 使用 | 取决于素材来源 | 模板与音乐的授权需自查 | 无风险 |
 | 成本 | 免费、可复现 | 按次付费，需反复“抽卡” | 免费，但费时 | 部分会员 | 免费 |
 
-**结论：采用 A，代码动画视频。** 这段视频的核心知识点就是“×”“X”“·”三个符号长什么样、写在什么位置，符号必须一笔不差。AI 视频模型最弱的恰恰是文字和符号。它也容易编造历史人物相貌，在优质课评比中反而会扣分。
+**结论：采用 A，代码动画视频。** 数学史视频的核心是符号、数字长什么样、写在什么位置（如 ×、·、卵形记号、算筹、分数线），必须一笔不差。AI 视频模型最弱的恰恰是文字和符号。它也容易编造历史人物相貌，在优质课评比中反而会扣分。
 
 如果确实想要一两个写实的历史镜头（例如 17 世纪书房），可以用即梦、可灵单独生成几秒空镜头，不出现文字和人脸，再剪进本片。不过要按规定标注“AI 生成”。
 
-本片和参考教程的差别：
+与参考教程的差别：
 
-- **配音**：与教程一样使用 Gemini 语音合成（`gemini-3.8-flash-tts`，女声 Vindemiatrix）。语气写在 `speech_metadata.style` 里：“温柔亲切的小学女老师给二年级小朋友讲故事……”。注意不能把说明直接写进朗读文本，否则模型会连说明一起读出来。每句合成后，都用 Paraformer 语音识别自动回听校对，确认没有漏字、加字。离线备用方案是 Kokoro 中文模型（`--engine kokoro`），声音偏生硬。
+- **配音**：与教程一样使用 Gemini 语音合成（`gemini-3.8-flash-tts`，女声 Vindemiatrix）。语气写在 `speech_metadata.style` 里：“温柔亲切的小学女老师给小朋友讲故事……”。注意不能把说明直接写进朗读文本，否则模型会连说明一起读出来。每句合成后，都用 Paraformer 语音识别自动回听校对，确认没有漏字、加字。离线备用方案是 Kokoro 中文模型（`--engine kokoro`），声音偏生硬。
 - **动画**：用 Canvas 自己写时间轴，没有用 HyperFrames 或 Remotion。思路相同：给定任意时刻，画面唯一确定；不读系统时间，随机数固定种子。
-- **字幕**：烧录在画面里时，× 和 · 单独绘制，避免字体里的 × 看起来像字母 x。
+- **字幕**：烧录在画面里时，× 和 · 单独绘制，避免 × 看起来像字母 x；“1/4”这样的分数竖排显示。
+
 
 ### 关于配音质量
 
 AI 配音清楚、稳定，但比赛场合**真人配音（老师本人或请播音老师）通常更加分**。替换方法任选其一：
 
-1. 用“无字幕版”在剪映里静音原声，按 `乘号的由来.srt` 的时间点逐句录音对齐。
+1. 用“无字幕版”在剪映里静音原声，按 `.srt` 的时间点逐句录音对齐。
 2. 把录音（一整段即可）发给 Claude。用语音识别反推每句的时间后，动画会自动重新卡点。全片按配音排时间，换配音只需重跑一遍，最省事。
 
 ---
@@ -69,11 +52,9 @@ AI 配音清楚、稳定，但比赛场合**真人配音（老师本人或请播
 **PowerPoint（2016 / 2019 / 365）**
 
 1. 把 mp4 和 pptx 放在同一个文件夹。
-2. 插入 → 视频 → 此设备 → 选择 `乘号的由来（带字幕）.mp4`。默认就是“嵌入”，拷到别的电脑也能播。
+2. 插入 → 视频 → 此设备 → 选择 `……（带字幕）.mp4`。默认就是“嵌入”，拷到别的电脑也能播。
 3. 选中视频 → “播放”选项卡：开始方式选“单击时”或“自动”，勾选“全屏播放”和“播完返回开头”。
-4. **可选，用于课堂互动**：在“播放”选项卡里“添加书签”，放映时按 Alt+End 跳到下一个书签。建议的停顿点：
-   - **约 0:40**，“写在一起容易认错”之后：问学生“你觉得哪里容易认错？”
-   - **约 0:54**，“用一个点表示相乘”之后：让学生猜一猜点写在哪里。
+4. **可选，用于课堂互动**：在“播放”选项卡里“添加书签”，放映时按 Alt+End 跳到下一个书签。各视频建议的停顿点见各自的 README。
 5. 不要用“文件 → 信息 → 压缩媒体”，会降低清晰度。
 
 **WPS 演示**：插入 → 视频 → 嵌入视频。
@@ -84,43 +65,32 @@ AI 配音清楚、稳定，但比赛场合**真人配音（老师本人或请播
 
 ---
 
-## 史实核对
-
-- **1631 年，奥特雷德（William Oughtred，英国，1574—1660）**在《数学之钥》（*Clavis Mathematicae*）中用“×”表示乘法。✔
-- **1698 年 7 月 29 日，莱布尼茨（Gottfried Wilhelm Leibniz，德国，1646—1716）**在写给约翰·伯努利的信中说，他不喜欢用 × 表示乘法，因为容易和字母 x 混淆，更愿意用一个点表示相乘。✔（见 F. Cajori《A History of Mathematical Notations》）
-- 脚本里只说“另一个数学家”。画面上的人物卡写了莱布尼茨的名字，方便老师讲解时补充。如果想和脚本完全一致，可以渲染不带名字的版本（见下文 `names`），人物卡会改成“另一位数学家”。
-- 人物卡是风格化的卡通形象（奥特雷德戴小黑帽，莱布尼茨是标志性的长卷发），不是真实肖像。
-
----
-
-## 修改与重新生成
+## 制作与修改
 
 ```
-script/narration.json   旁白文字（sub = 字幕显示，tts = 朗读文本）、语速、停顿
-web/index.html          全部画面与动画（直接用浏览器打开可实时预览、拖动进度条）
-tools/tts.py            逐句配音 + 语音识别校对 + 生成时间轴和字幕
+tools/tts.py            逐句配音（Gemini / 离线 Kokoro）+ 语音识别校对 + 生成时间轴和字幕
 tools/render.mjs        无头浏览器逐帧截图 → FFmpeg
 tools/mix.py            代码合成的音效与八音盒背景音乐、旁白闪避、响度标准化
 tools/build.sh          一键出片
 tools/subset_font.py    霞鹜文楷字体子集化（改了文字后要重跑）
+videos/<名称>/script/narration.json   旁白文字（sub = 字幕显示，tts = 朗读文本）、配音设置、停顿
+videos/<名称>/web/index.html          该视频的全部画面与动画（浏览器打开可实时预览、拖动进度条）
 ```
 
-依赖：Python 3（`pip install sherpa-onnx soundfile numpy scipy fonttools brotli`）、Node.js + Playwright（Chromium）、FFmpeg。语音模型 `kokoro-multi-lang-v1_1` 和 `sherpa-onnx-paraformer-zh-small-2024-03-09` 从 [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases) 下载，放在同一目录。
+依赖：Python 3（`pip install sherpa-onnx soundfile numpy scipy fonttools brotli`）、Node.js + Playwright（Chromium）、FFmpeg。语音识别校对用的 `sherpa-onnx-paraformer-zh-small-2024-03-09`（离线配音还需 `kokoro-multi-lang-v1_1`）从 [sherpa-onnx releases](https://github.com/k2-fsa/sherpa-onnx/releases) 下载，放在同一目录。Gemini 配音需要环境变量 `GEMINI_API_KEY`、仓库根目录的 `.env`，或云环境里配置好的 Network secret（`x-goog-api-key` 头）。
 
 ```bash
+export VIDEO_DIR=videos/fenshu
 python3 tools/subset_font.py LXGWWenKai-Medium.ttf     # 改了任何文字后
-python3 tools/tts.py --engine gemini --models /path/to/models   # Gemini 配音（需 GEMINI_API_KEY 或云环境 Network secret）
-SKIP_TTS=1 tools/build.sh                              # 用上面的配音出片
-MODELS=/path/to/models tools/build.sh                  # 完整出片（离线 Kokoro 配音）
+MODELS=/path/to/models tools/build.sh                  # 完整出片（Gemini 配音；ENGINE=kokoro 改用离线配音）
 SKIP_TTS=1 tools/build.sh                              # 只改了画面时，跳过配音
 node tools/render.mjs --stills 20,40,60                # 导出指定秒数的截图检查
-node tools/render.mjs --sub 1 --names 0 --out build/v.mp4   # 人物卡不显示名字
 ```
 
-用浏览器预览时，在仓库根目录运行 `python3 -m http.server`，打开 `http://localhost:8000/web/`（地址后加 `?sub=0` 隐藏字幕，加 `?names=0` 隐藏人名）。
+用浏览器预览：在仓库根目录运行 `python3 -m http.server`，打开 `http://localhost:8000/videos/fenshu/web/`（加 `?sub=0` 隐藏字幕）。
 
 ## 素材授权
 
-- 字体：霞鹜文楷 LXGW WenKai（SIL Open Font License 1.1），已子集化放在 `web/fonts/`。
-- 配音：Google Gemini TTS（用户自己的 API 账号生成）；离线备用 Kokoro-82M v1.1-zh（Apache-2.0）。`output/样音/` 是 5 种音色的试听。
+- 字体：霞鹜文楷 LXGW WenKai（SIL Open Font License 1.1），按视频子集化放在各自的 `web/fonts/`。
+- 配音：Google Gemini TTS（`gemini-3.8-flash-tts`，用户自己的 API 账号生成）；离线备用 Kokoro-82M v1.1-zh（Apache-2.0）。`videos/chenghao/output/样音/` 是 5 种音色的试听。
 - 图形、动画、背景音乐、音效：全部由本仓库代码生成，无第三方素材。

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const { chromium } = createRequire(import.meta.url)("playwright"); // 兼容全局安装（NODE_PATH）
-const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const ROOT = path.resolve(process.env.VIDEO_DIR || path.dirname(path.dirname(fileURLToPath(import.meta.url)))); // 视频目录
 const arg = (k, d) => { const i = process.argv.indexOf("--" + k); return i > 0 ? process.argv[i + 1] : d; };
 const fps = +arg("fps", 30), sub = arg("sub", "1") === "1", names = arg("names", "1") === "1";
 const out = path.resolve(ROOT, arg("out", "build/video.mp4"));

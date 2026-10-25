@@ -4,7 +4,8 @@
 import os, sys, string
 from fontTools import subset
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.abspath(os.environ.get("VIDEO_DIR", REPO))  # 视频目录，如 videos/fenshu
 chars = set(string.printable) | set("×·—，。！？：“”《》、（）")
 for p in ("web/index.html", "script/narration.json"):
     chars |= set(open(os.path.join(ROOT, p), encoding="utf-8").read())
