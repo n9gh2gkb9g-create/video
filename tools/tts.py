@@ -27,6 +27,57 @@ def load_asr(models, threads=8):
         paraformer=p + "model.int8.onnx", tokens=p + "tokens.txt", num_threads=threads)
 
 
+class GeminiTTS:
+    """Gemini 语音合成（参考教程的做法）：用自然语言描述语气，逐句合成。
+    API Key 取自环境变量 GEMINI_API_KEY，或仓库根目录 .env 里的 GEMINI_API_KEY=...（.env 不入库）。
+    同一句话 + 同样设置的结果缓存在 build/tts_cache/，重跑不重复计费。"""
+
+    def __init__(self, cfg):
+        self.model = cfg.get("model", "gemini-2.5-flash-preview-tts")
+        self.voice = cfg.get("voice", "Leda")
+        self.style = cfg.get("style", "")
+        self.key = os.environ.get("GEMINI_API_KEY") or self._dotenv()
+        if not self.key:
+            raise SystemExit("缺少 GEMINI_API_KEY（环境变量或 .env）")
+        self.cache = os.path.join(ROOT, "build", "tts_cache"); os.makedirs(self.cache, exist_ok=True)
+
+    @staticmethod
+    def _dotenv():
+        p = os.path.join(ROOT, ".env")
+        if os.path.exists(p):
+            for line in open(p, encoding="utf-8"):
+                k, _, v = line.strip().partition("=")
+                if k.strip() == "GEMINI_API_KEY":
+                    return v.strip().strip('"\'')
+
+    def say(self, text):
+        import base64, hashlib, time, urllib.request, urllib.error
+        prompt = f"{self.style}\n{text}" if self.style else text
+        h = hashlib.sha1(f"{self.model}|{self.voice}|{prompt}".encode()).hexdigest()[:16]
+        fp = os.path.join(self.cache, h + ".wav")
+        if os.path.exists(fp):
+            x, sr = sf.read(fp, dtype="float32"); return x, sr
+        body = json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}}},
+        }).encode()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        for attempt in range(5):
+            req = urllib.request.Request(url, body, {"Content-Type": "application/json", "x-goog-api-key": self.key})
+            try:
+                d = json.load(urllib.request.urlopen(req, timeout=120)); break
+            except urllib.error.HTTPError as e:
+                msg = e.read().decode(errors="ignore")[:300]
+                if e.code in (429, 500, 503) and attempt < 4:
+                    time.sleep(2 ** attempt * 3); continue
+                raise SystemExit(f"Gemini 请求失败 {e.code}: {msg}")
+        pcm = base64.b64decode(d["candidates"][0]["content"]["parts"][0]["inlineData"]["data"])
+        x = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768  # 24 kHz 单声道 16 位 PCM
+        sf.write(fp, x, 24000)
+        return x, 24000
+
+
 def resample(x, sr_in, sr_out):
     n = int(round(len(x) * sr_out / sr_in))
     return np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
@@ -45,11 +96,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", required=True)
     ap.add_argument("--sid", type=int)
+    ap.add_argument("--engine", choices=["kokoro", "gemini"], default="kokoro")
     args = ap.parse_args()
 
     cfg = json.load(open(os.path.join(ROOT, "script", "narration.json"), encoding="utf-8"))
     sid = args.sid if args.sid is not None else cfg["voice"]["sid"]
-    tts, asr = load_tts(args.models), load_asr(args.models)
+    asr = load_asr(args.models)
+    if args.engine == "gemini":
+        gem = GeminiTTS(cfg.get("gemini", {}))
+    else:
+        kokoro = load_tts(args.models)
 
     t = cfg["lead_in"]
     clips, timeline = [], {"title": cfg["title"], "scenes": [], "segments": []}
@@ -61,10 +117,13 @@ def main():
         for gi, seg in enumerate(sc["segments"]):
             if gi:
                 t += cfg["gap"]
-            a = tts.generate(seg["tts"], sid=sid, speed=cfg["voice"]["speed"])
-            x = np.asarray(a.samples, dtype=np.float32)
-            s = asr.create_stream(); s.accept_waveform(a.sample_rate, x); asr.decode_stream(s)
-            x = trim(resample(x, a.sample_rate, SR))
+            if args.engine == "gemini":
+                x, sr_in = gem.say(seg["tts"])
+            else:
+                a = kokoro.generate(seg["tts"], sid=sid, speed=cfg["voice"]["speed"])
+                x, sr_in = np.asarray(a.samples, dtype=np.float32), a.sample_rate
+            s = asr.create_stream(); s.accept_waveform(sr_in, x); asr.decode_stream(s)
+            x = trim(resample(x, sr_in, SR))
             d = len(x) / SR
             print(f"{seg['id']:>4} {t:6.2f}s +{d:4.2f}s  {seg['tts']}\n      识别: {s.result.text}")
             clips.append((t, x))
