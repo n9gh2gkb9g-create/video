@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>乘号的由来</title>
+<style>
+  @font-face { font-family: "WenKai"; src: url("fonts/wenkai-medium.woff2") format("woff2"); font-weight: 500; }
+  html, body { margin: 0; background: #222; }
+  canvas { display: block; width: 100vw; max-width: 1920px; aspect-ratio: 16 / 9; margin: 0 auto; }
+  #bar { color: #ddd; font: 14px sans-serif; padding: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<div id="bar"></div>
+<script>
+// 画面是时间的纯函数：renderAt(t) 只依赖 t 和时间轴，不读系统时间、不用无种子随机数。
+const W = 1920, H = 1080, FONT = '"WenKai", "LXGW WenKai", sans-serif';
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const C = {
+  cream: [255, 248, 236], sepia: [238, 221, 186], ink: "#3b2f2a", inkSoft: "#7a6656",
+  orange: "#f08a24", red: "#e4572e", teal: "#1f9d8f", blue: "#3d7dd8", yellow: "#f6c945",
+  brown: "#8a5a3b", leather: "#7b3f22", gold: "#d9a441", paper: "#fbf3df",
+};
+let TL = null, OPT = { sub: true, names: true }, SC = {}, SG = {}, K = {};
+
+// ---------- 工具函数 ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eOut = p => 1 - Math.pow(1 - p, 3);
+const eInOut = p => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const eBack = p => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const eElastic = p => p === 0 || p === 1 ? p : Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * (2 * Math.PI / 3)) + 1;
+const mix = (c1, c2, p) => `rgb(${c1.map((v, i) => Math.round(lerp(v, c2[i], p))).join(",")})`;
+function rng(seed) { let s = seed >>> 0; return () => { s = (s + 0x6d2b79f5) >>> 0; let x = s; x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) / 4294967296; }; }
+const hash = (a, b = 0) => rng(a * 9301 + b * 49297 + 233280)();
+// 手绘“抖动”：每 1/8 秒换一次，模拟逐格动画的线条呼吸感
+let BOIL = 0;
+const jit = (k, amp = 2) => (hash(k, BOIL) - 0.5) * 2 * amp;
+
+function font(size, w = 500) { ctx.font = `${w} ${size}px ${FONT}`; }
+function popScale(p) { return p <= 0 ? 0 : eBack(clamp(p)); }
+function withT(x, y, s, r, fn) { ctx.save(); ctx.translate(x, y); ctx.rotate(r || 0); ctx.scale(s, s); fn(); ctx.restore(); }
+
+function roughLine(pts, k, amp = 1.6) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => { const X = x + jit(k + i * 7, amp), Y = y + jit(k + i * 7 + 3, amp); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+}
+function roughRect(x, y, w, h, r, k, amp = 1.6) {
+  const pts = [], n = 6;
+  const corner = (cx, cy, a0) => { for (let i = 0; i <= n; i++) { const a = a0 + i / n * Math.PI / 2; pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]); } };
+  corner(x + w - r, y + r, -Math.PI / 2); corner(x + w - r, y + h - r, 0); corner(x + r, y + h - r, Math.PI / 2); corner(x + r, y + r, Math.PI);
+  roughLine(pts, k, amp); ctx.closePath();
+}
+function card(x, y, w, h, k, fill = "#fffdf6", stroke = C.ink, lw = 4) {
+  ctx.save(); ctx.fillStyle = "rgba(60,40,20,0.13)"; roughRect(x + 8, y + 10, w, h, 26, k + 99, 1); ctx.fill(); ctx.restore();
+  roughRect(x, y, w, h, 26, k); ctx.fillStyle = fill; ctx.fill(); ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = "round"; ctx.stroke();
+}
+// 按比例画出一条线段（笔画书写效果）
+function strokeSeg(x1, y1, x2, y2, p, color, lw) {
+  if (p <= 0) return;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(lerp(x1, x2, p), lerp(y1, y2, p));
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+}
+function drawTimes(cx, cy, s, p, color, lw) { // 乘号 ×，两笔
+  const d = s / 2;
+  strokeSeg(cx - d, cy - d, cx + d, cy + d, prog(p, 0, 0.5), color, lw);
+  strokeSeg(cx + d, cy - d, cx - d, cy + d, prog(p, 0.5, 1), color, lw);
+}
+function drawDot(cx, cy, r, p, color) { if (p <= 0) return; ctx.beginPath(); ctx.arc(cx, cy, r * popScale(p), 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); }
+
+// 算式排版：items = [{t:"3"}, {op:"×"}, ...]；每项可带 p（出现进度）、color、hl（高亮圈）
+function formula(items, cx, base, size, opt = {}) {
+  font(size, 500);
+  const asc = ctx.measureText("3").actualBoundingBoxAscent, mid = base - asc / 2;
+  const opW = size * 0.95, ws = items.map(it => it.t != null ? ctx.measureText(it.t).width + size * 0.08 : opW);
+  let x = cx - ws.reduce((a, b) => a + b, 0) / 2;
+  const pos = [];
+  items.forEach((it, i) => {
+    const w = ws[i], p = it.p == null ? 1 : it.p, col = it.color || opt.color || C.ink, xc = x + w / 2;
+    pos.push({ x: xc, y: mid, w });
+    if (p > 0) {
+      if (it.t != null) {
+        const s = popScale(p);
+        withT(xc, base, s, 0, () => { ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic"; ctx.fillText(it.t, 0, 0); });
+      } else if (it.op === "×") drawTimes(xc, mid, size * 0.4, p, col, size * 0.085);
+      else if (it.op === "·") drawDot(xc, mid, size * 0.075, p, col);
+      else if (it.op === "=") { strokeSeg(xc - size * 0.25, mid - size * 0.11, xc + size * 0.25, mid - size * 0.11, prog(p, 0, .5), col, size * 0.07); strokeSeg(xc - size * 0.25, mid + size * 0.11, xc + size * 0.25, mid + size * 0.11, prog(p, .5, 1), col, size * 0.07); }
+    }
+    x += w;
+  });
+  return pos;
+}
+// 手绘圈注
+function circleMark(x, y, rx, ry, p, color, k, lw = 7) {
+  if (p <= 0) return;
+  ctx.beginPath(); const n = 48, end = p * 1.08;
+  for (let i = 0; i <= n * end; i++) {
+    const a = -Math.PI * 0.6 + i / n * Math.PI * 2, wob = 1 + 0.05 * Math.sin(i * 0.7 + k) + jit(k + i, 0.006);
+    const X = x + Math.cos(a) * rx * wob, Y = y + Math.sin(a) * ry * wob;
+    i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+  }
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+}
+function arrow(x1, y1, x2, y2, p, color, lw = 6) {
+  if (p <= 0) return;
+  const X = lerp(x1, x2, p), Y = lerp(y1, y2, p), a = Math.atan2(y2 - y1, x2 - x1);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo((x1 + X) / 2 + (Y - y1) * 0.15, (y1 + Y) / 2 - (X - x1) * 0.15, X, Y);
+  ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = "round"; ctx.stroke();
+  if (p > 0.6) { ctx.beginPath(); ctx.moveTo(X - Math.cos(a - 0.5) * 24, Y - Math.sin(a - 0.5) * 24); ctx.lineTo(X, Y); ctx.lineTo(X - Math.cos(a + 0.5) * 24, Y - Math.sin(a + 0.5) * 24); ctx.stroke(); }
+}
+function label(text, x, y, size, color, p = 1, align = "center", w = 500) {
+  if (p <= 0) return;
+  font(size, w);
+  withT(x, y, popScale(p), 0, () => { ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 0); });
+}
+// 胶囊标签
+function pill(text, x, y, size, bg, fg, p = 1, k = 1) {
+  if (p <= 0) return;
+  font(size); const w = ctx.measureText(text).width + size * 1.4, h = size * 1.7;
+  withT(x, y, popScale(p), jit(k, 0.004), () => {
+    roughRect(-w / 2, -h / 2, w, h, h / 2, k, 1.2); ctx.fillStyle = bg; ctx.fill();
+    ctx.fillStyle = fg; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 2);
+  });
+}
+// 逐字弹出的文字
+function popText(text, x, y, size, color, t0, t, step = 0.08, w = 500) {
+  font(size, w);
+  const chars = [...text], ws = chars.map(c => ctx.measureText(c).width), tw = ws.reduce((a, b) => a + b, 0);
+  let cx = x - tw / 2;
+  chars.forEach((c, i) => {
+    const p = prog(t, t0 + i * step, t0 + i * step + 0.45);
+    if (p > 0) withT(cx + ws[i] / 2, y, popScale(p), (1 - eOut(p)) * 0.3 * (i % 2 ? 1 : -1), () => {
+      ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(c, 0, 0);
+    });
+    cx += ws[i];
+  });
+  return tw;
+}
+
+// ---------- 背景 ----------
+let paperTex = null;
+function makePaper() {
+  paperTex = document.createElement("canvas"); paperTex.width = W; paperTex.height = H;
+  const g = paperTex.getContext("2d"), r = rng(7);
+  for (let i = 0; i < 9000; i++) { g.fillStyle = `rgba(120,85,40,${r() * 0.07})`; g.fillRect(r() * W, r() * H, 1 + r() * 2, 1 + r() * 2); }
+  for (let i = 0; i < 260; i++) {
+    const x = r() * W, y = r() * H, a = r() * Math.PI, l = 20 + r() * 60;
+    g.strokeStyle = `rgba(140,100,50,${0.03 + r() * 0.05})`; g.lineWidth = 1; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+}
+function sepiaAt(t) {
+  const rw = SC.rewind, td = SC.today;
+  return prog(t, rw.start + 1.2, rw.end - 0.6) * (1 - prog(t, td.start + 0.2, td.start + 1.3));
+}
+function background(t) {
+  const s = sepiaAt(t);
+  ctx.fillStyle = mix(C.cream, C.sepia, s); ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 0.35 + s * 0.65; ctx.drawImage(paperTex, 0, 0); ctx.globalAlpha = 1;
+  if (s > 0) {
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.95);
+    g.addColorStop(0, "rgba(90,55,20,0)"); g.addColorStop(1, `rgba(90,55,20,${0.38 * s})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  // 漂浮的 × 和 ·（现代场景）
+  const fl = 1 - s;
+  if (fl > 0) {
+    const r = rng(11);
+    for (let i = 0; i < 26; i++) {
+      const x0 = r() * W, y0 = r() * H, sp = 8 + r() * 14, ph = r() * 6.28, sz = 30 + r() * 40, isDot = r() < 0.4, col = [C.orange, C.teal, C.blue, C.yellow][i % 4];
+      const x = (x0 + t * sp) % (W + 100) - 50, y = y0 + Math.sin(t * 0.6 + ph) * 18;
+      ctx.globalAlpha = 0.10 * fl;
+      if (isDot) drawDot(x, y, sz * 0.18, 1, col); else withT(x, y, 1, Math.sin(t * 0.4 + ph) * 0.4, () => drawTimes(0, 0, sz * 0.6, 1, col, sz * 0.12));
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------- 角色与道具 ----------
+// 头像框里的人物剪影（不画真实相貌，避免“以假乱真”）
+function portrait(x, y, s, kind, k) {
+  withT(x, y, s, 0, () => {
+    ctx.save();
+    roughRect(-130, -160, 260, 320, 120, k, 1.2); ctx.fillStyle = "#f7e7c6"; ctx.fill();
+    ctx.lineWidth = 12; ctx.strokeStyle = C.gold; ctx.stroke(); ctx.lineWidth = 3; ctx.strokeStyle = C.brown; ctx.stroke();
+    roughRect(-118, -148, 236, 296, 110, k + 5, 0.8); ctx.clip();
+    const body = "#5b4232", skin = "#d9b48a";
+    ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(0, 175, 125, 95, 0, 0, Math.PI * 2); ctx.fill();
+    if (kind === "leibniz") { // 长卷发假发
+      ctx.fillStyle = "#4a3426";
+      for (let i = 0; i < 14; i++) { const a = Math.PI * (0.05 + i / 13 * 0.9), r = 74; ctx.beginPath(); ctx.arc(Math.cos(a) * r * (i < 7 ? -1 : 1) * (i < 7 ? 1 : 1), -20 + Math.sin(a) * 0 + (i % 7) * 22 - 50, 30, 0, Math.PI * 2); ctx.fill(); }
+      ctx.beginPath(); ctx.ellipse(0, -55, 82, 70, 0, Math.PI, 0); ctx.fill();
+    }
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.ellipse(0, -30, 52, 64, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(-20, 20, 40, 40);
+    if (kind === "oughtred") { // 黑色小帽、胡须、白色领口
+      ctx.fillStyle = "#2d2420"; ctx.beginPath(); ctx.ellipse(0, -72, 56, 30, 0, Math.PI, 0); ctx.fill(); ctx.fillRect(-56, -74, 112, 10);
+      ctx.fillStyle = "#e9e1d3"; ctx.beginPath(); ctx.moveTo(-26, 4); ctx.quadraticCurveTo(0, 62, 26, 4); ctx.quadraticCurveTo(0, 30, -26, 4); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(-70, 70); ctx.lineTo(0, 52); ctx.lineTo(70, 70); ctx.lineTo(40, 100); ctx.lineTo(0, 82); ctx.lineTo(-40, 100); ctx.closePath(); ctx.fill();
+    } else {
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(-18, 60); ctx.lineTo(0, 110); ctx.lineTo(18, 60); ctx.closePath(); ctx.fill();
+    }
+    // 简笔五官
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(-18, -36, 4.5, 0, 7); ctx.arc(18, -36, 4.5, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#9b6a4a"; ctx.lineWidth = 3.5; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, -8, 14, 0.2 * Math.PI, 0.8 * Math.PI); ctx.stroke();
+    ctx.restore();
+  });
+}
+function nameCard(x, y, p, kind, title, latin, info, k) {
+  if (p <= 0) return;
+  const a = eOut(p);
+  ctx.save(); ctx.globalAlpha *= a;
+  withT(x, y + (1 - a) * 40, 1, 0, () => {
+    card(-210, -300, 420, 600, k, "rgba(255,250,238,0.95)", C.brown, 4);
+    portrait(0, -95, 0.95, kind, k + 3);
+    label(title, 0, 140, 58, C.ink);
+    if (latin) label(latin, 0, 200, 30, C.inkSoft);
+    if (info) label(info, 0, 248, 30, C.inkSoft);
+  });
+  ctx.restore();
+}
+function yearBadge(text, x, y, p, k) {
+  if (p <= 0) return;
+  const s = p < 1 ? lerp(2.2, 1, eOut(p)) : 1;
+  ctx.save(); ctx.globalAlpha *= clamp(p * 3);
+  withT(x, y, s, -0.08, () => {
+    roughRect(-150, -58, 300, 116, 18, k, 1.5); ctx.fillStyle = "rgba(196,60,40,0.10)"; ctx.fill();
+    ctx.lineWidth = 7; ctx.strokeStyle = "#b8412c"; ctx.stroke();
+    font(72); ctx.fillStyle = "#b8412c"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, 0, 4);
+  });
+  ctx.restore();
+}
+function book(x, y, s, r, k) {
+  withT(x, y, s, r, () => {
+    ctx.fillStyle = "rgba(60,30,10,0.25)"; roughRect(-185, -235, 390, 490, 18, k + 50, 1); ctx.fill();
+    ctx.fillStyle = "#efe2c2"; ctx.fillRect(-165, -238, 345, 470); // 书页侧边
+    roughRect(-200, -250, 380, 480, 16, k, 1.2); ctx.fillStyle = C.leather; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "#4e2512"; ctx.stroke();
+    ctx.fillStyle = "#5e2c15"; ctx.fillRect(-200, -246, 34, 472);
+    roughRect(-140, -210, 290, 400, 10, k + 9, 1); ctx.lineWidth = 5; ctx.strokeStyle = C.gold; ctx.stroke();
+    font(46); ctx.fillStyle = C.gold; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("CLAVIS", 5, -140); font(34); ctx.fillText("MATHEMATICAE", 5, -88);
+    // 钥匙图案
+    withT(5, 50, 1, -0.6, () => {
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 11; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.arc(0, -60, 34, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, -26); ctx.lineTo(0, 90); ctx.moveTo(0, 60); ctx.lineTo(26, 60); ctx.moveTo(0, 84); ctx.lineTo(22, 84); ctx.stroke();
+    });
+    font(30); ctx.fillStyle = "#e8c98a"; ctx.fillText("1631", 5, 165);
+  });
+}
+function quill(x, y, r, s = 1) {
+  withT(x, y, s, r, () => {
+    ctx.fillStyle = "#fffaf0"; ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(30, -90, 95, -230); ctx.quadraticCurveTo(70, -120, 0, 0); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(-10, -110, 95, -230); ctx.quadraticCurveTo(20, -100, 0, 0); ctx.fillStyle = "#f2e6cc"; ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(92, -226); ctx.strokeStyle = C.brown; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = C.ink; ctx.beginPath(); ctx.moveTo(-3, 4); ctx.lineTo(6, -16); ctx.lineTo(-2, -14); ctx.fill();
+  });
+}
+function scribble(x, y, w, lines, p, k, color = "#6b5240") { // 信纸上的“手写字”
+  ctx.strokeStyle = color; ctx.lineWidth = 3.2; ctx.lineCap = "round";
+  for (let l = 0; l < lines; l++) {
+    const lp = prog(p, l / lines, (l + 1) / lines); if (lp <= 0) continue;
+    const r = rng(k + l), lw = w * (l === lines - 1 ? 0.55 : 0.85 + r() * 0.15);
+    ctx.beginPath();
+    for (let i = 0; i <= lw * lp; i += 4) { const yy = y + l * 46 + Math.sin(i * 0.21 + r() * 0.5) * 7 * (0.6 + 0.4 * Math.sin(i * 0.037)); i ? ctx.lineTo(x + i, yy) : ctx.moveTo(x + i, yy); }
+    ctx.stroke();
+  }
+}
+function apple(x, y, r, p) {
+  if (p <= 0) return;
+  withT(x, y, popScale(p), 0, () => {
+    ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(0, -r * 0.7);
+    ctx.bezierCurveTo(r * 1.1, -r * 1.25, r * 1.35, r * 0.55, 0, r); ctx.bezierCurveTo(-r * 1.35, r * 0.55, -r * 1.1, -r * 1.25, 0, -r * 0.7); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.beginPath(); ctx.ellipse(-r * 0.42, -r * 0.2, r * 0.16, r * 0.3, 0.4, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#6b4226"; ctx.lineWidth = r * 0.12; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(0, -r * 0.7); ctx.lineTo(r * 0.1, -r * 1.1); ctx.stroke();
+    ctx.fillStyle = "#58a65c"; ctx.beginPath(); ctx.ellipse(r * 0.35, -r * 1.02, r * 0.3, r * 0.14, -0.5, 0, 7); ctx.fill();
+  });
+}
+function sparkle(x, y, s, p, color = C.yellow) {
+  if (p <= 0 || p >= 1) return;
+  const a = Math.sin(p * Math.PI), sc = s * (0.4 + p);
+  ctx.save(); ctx.globalAlpha *= a; ctx.fillStyle = color;
+  withT(x, y, sc, p * 2, () => { ctx.beginPath(); for (let i = 0; i < 8; i++) { const r = i % 2 ? 6 : 22, an = i / 8 * Math.PI * 2; ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r); } ctx.fill(); });
+  ctx.restore();
+}
+// 顶部小时间线：1631 —— 1698 —— 今天
+function miniTimeline(t, alpha) {
+  if (alpha <= 0) return;
+  const X = { 1631: 700, 1698: 860, now: 1220 }, y = 74;
+  let mx;
+  const o = SC.oughtred, l = SC.letter, td = SC.today;
+  if (t < SG.s8.start) mx = X[1631];
+  else if (t < td.start) mx = lerp(X[1631], X[1698], eInOut(prog(t, SG.s8.start - 0.2, SG.s8.start + 0.8)));
+  else mx = lerp(X[1698], X.now, eInOut(prog(t, td.start + 0.1, td.start + 1.2)));
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = C.inkSoft; ctx.lineWidth = 4; ctx.setLineDash([2, 12]); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(620, y); ctx.lineTo(1300, y); ctx.stroke(); ctx.setLineDash([]);
+  [[X[1631], "1631年"], [X[1698], "1698年"], [X.now, "今天"]].forEach(([x, s]) => {
+    ctx.fillStyle = C.inkSoft; ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fill(); label(s, x, y + 38, 28, C.inkSoft);
+  });
+  ctx.fillStyle = C.red; ctx.beginPath(); ctx.arc(mx, y, 14 + Math.sin(t * 5) * 1.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- 各场景 ----------
+// 每个场景函数拿到 lt（场景内时间）和 g(id)（该句旁白相对场景开始的时刻）
+const scenes = {
+  title(lt, g, t) {
+    const s0 = g("s0");
+    pill("数学小故事", W / 2, 250, 40, C.teal, "#fff", prog(lt, 0.2, 0.7), 3);
+    // 大大的 ×
+    withT(W / 2, 470, 1 + 0.06 * Math.sin(lt * 2.4) * prog(lt, 1.2, 1.6), Math.sin(lt * 1.3) * 0.04, () => drawTimes(0, 0, 150, prog(lt, 0.15, 0.95), C.orange, 30));
+    sparkle(W / 2 + 120, 400, 1.6, prog(lt, 0.9, 1.6)); sparkle(W / 2 - 130, 540, 1.2, prog(lt, 1.0, 1.7), C.teal);
+    const tw = popText("乘号的由来", W / 2, 700, 150, C.ink, s0 - 0.3, lt, 0.11);
+    const up = eOut(prog(lt, s0 + 0.6, s0 + 1.3));
+    if (up > 0) { ctx.strokeStyle = C.yellow; ctx.lineWidth = 16; ctx.lineCap = "round"; roughLine([[W / 2 - tw / 2, 790], [W / 2 - tw / 2 + tw * up, 784 + Math.sin(up * 3) * 6]], 4, 1.2); ctx.stroke(); }
+  },
+  known(lt, g) {
+    const s1 = g("s1");
+    // 3 行 4 列苹果
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) apple(W / 2 - 255 + c * 170, 210 + r * 150, 52, prog(lt, 0.15 + (r * 4 + c) * 0.06, 0.5 + (r * 4 + c) * 0.06));
+    const f = [{ t: "3" }, { op: "×", color: C.orange }, { t: "4" }, { op: "=" }, { t: "12" }];
+    const ap = lt - (s1 + 0.6);
+    f.forEach((it, i) => it.p = prog(ap, i * 0.16, i * 0.16 + 0.45));
+    const pos = formula(f, W / 2, 870, 150);
+    const cp = prog(lt, s1 + 1.7, s1 + 2.3);
+    circleMark(pos[1].x, pos[1].y, 56, 54, cp, C.red, 5);
+    arrow(pos[1].x + 250, pos[1].y - 160, pos[1].x + 62, pos[1].y - 56, prog(lt, s1 + 1.9, s1 + 2.4), C.red);
+    pill("乘号", pos[1].x + 330, pos[1].y - 185, 46, C.red, "#fff", prog(lt, s1 + 2.1, s1 + 2.6), 8);
+  },
+  rewind(lt, g, t) {
+    const s2 = g("s2"), sc = SC.rewind, dur = sc.end - sc.start;
+    const yp = eInOut(prog(lt, s2 + 1.4, dur - 1.3)), year = lerp(2025, 1631, yp);
+    // 时钟：指针倒着转
+    const spin = yp * 30 * Math.PI * 2 + lt * 0.3;
+    withT(W / 2, 360, 1, 0, () => {
+      card(-200, -200, 400, 400, 21, "rgba(255,252,242,0.95)", C.ink, 6);
+      ctx.beginPath(); ctx.arc(0, 0, 165, 0, 7); ctx.fillStyle = "#fffdf6"; ctx.fill(); ctx.lineWidth = 8; ctx.strokeStyle = C.ink; ctx.stroke();
+      for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; strokeSeg(Math.cos(a) * 140, Math.sin(a) * 140, Math.cos(a) * 155, Math.sin(a) * 155, 1, C.ink, 6); }
+      strokeSeg(0, 0, Math.sin(-spin / 12) * 85, -Math.cos(-spin / 12) * 85, 1, C.ink, 12);
+      strokeSeg(0, 0, Math.sin(-spin) * 125, -Math.cos(-spin) * 125, 1, C.red, 8);
+      ctx.beginPath(); ctx.arc(0, 0, 12, 0, 7); ctx.fillStyle = C.ink; ctx.fill();
+      // 倒转箭头
+      if (yp > 0 && yp < 1) { ctx.save(); ctx.globalAlpha *= Math.sin(yp * Math.PI); ctx.strokeStyle = C.orange; ctx.lineWidth = 10; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, 0, 200, -0.3 - lt * 2, -1.5 - lt * 2, true); ctx.stroke(); ctx.restore(); }
+    });
+    // 时间尺
+    const y = 760, pxPerYear = 4.2, cx = W / 2;
+    ctx.save(); ctx.globalAlpha *= prog(lt, 0.2, 0.8);
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(80, y); ctx.lineTo(W - 80, y); ctx.stroke();
+    for (let yr = 1500; yr <= 2030; yr += 10) {
+      const x = cx + (yr - year) * pxPerYear; if (x < 90 || x > W - 90) continue;
+      const big = yr % 100 === 0; strokeSeg(x, y, x, y + (big ? 40 : 18), 1, C.ink, big ? 5 : 3);
+      if (big) label(String(yr), x, y + 78, 40, C.inkSoft);
+    }
+    const nowX = cx + (2025 - year) * pxPerYear;
+    if (nowX < W - 90) { label("今天", nowX, y - 52, 40, C.teal); ctx.fillStyle = C.teal; ctx.beginPath(); ctx.arc(nowX, y, 11, 0, 7); ctx.fill(); }
+    ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(cx - 22, y - 50); ctx.lineTo(cx + 22, y - 50); ctx.lineTo(cx, y - 14); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 速度线
+    if (yp > 0.05 && yp < 0.95) { const r = rng(5); ctx.strokeStyle = "rgba(120,90,60,0.35)"; ctx.lineWidth = 4; for (let i = 0; i < 9; i++) { const yy = 620 + r() * 300, x0 = ((r() * W + lt * 1500) % W); strokeSeg(x0, yy, x0 + 120, yy, 1, "rgba(120,90,60,0.25)", 4); } }
+    yearBadge("1631年", cx, 945, prog(lt, dur - 1.25, dur - 0.85), 31);
+  },
+  oughtred(lt, g) {
+    const s3 = g("s3"), s4 = g("s4");
+    yearBadge("1631年", 250, 140, prog(lt, s3, s3 + 0.45), 41);
+    nameCard(440, 590, prog(lt, s3 + 1.5, s3 + 2.2), "oughtred", "奥特雷德", "William Oughtred", "英国 · 1574—1660", 42);
+    const bp = prog(lt, s3 + 4.0, s3 + 4.8), wr = prog(lt, s4 - 0.3, s4 + 0.6);
+    if (bp > 0) {
+      const bx = lerp(1250, 1050, eInOut(wr)), by = 510, bs = popScale(bp) * lerp(1, 0.78, eInOut(wr));
+      book(bx, by, bs, lerp(0.25, -0.06, eOut(bp)), 43);
+      pill("《数学之钥》", bx + 10, by + 300 * bs + 10, 44, C.brown, "#fff8e8", prog(lt, s3 + 4.5, s3 + 5.0), 44);
+    }
+    // 羊皮纸上用羽毛笔写 3 × 4
+    if (wr > 0) {
+      const px = 1500, py = 560, a = eOut(wr);
+      ctx.save(); ctx.globalAlpha *= a;
+      withT(px, py + (1 - a) * 60, 1, 0.04, () => {
+        card(-210, -170, 420, 340, 45, C.paper, C.brown, 3);
+        const wp = prog(lt, s4 + 0.1, s4 + 1.9);
+        const f = [{ t: "3", p: prog(wp, 0, 0.2) }, { op: "×", color: "#b8412c", p: prog(wp, 0.25, 0.75) }, { t: "4", p: prog(wp, 0.8, 1) }];
+        const pos = formula(f, 0, 50, 140);
+        // 羽毛笔跟着 × 的笔画走
+        const xp = prog(wp, 0.25, 0.75), d = 140 * 0.2, mx = pos[1].x, my = pos[1].y;
+        let qx, qy;
+        if (xp < 0.5) { const q = xp / 0.5; qx = mx - d + 2 * d * q; qy = my - d + 2 * d * q; } else { const q = (xp - 0.5) / 0.5; qx = mx + d - 2 * d * q; qy = my - d + 2 * d * q; }
+        if (wp >= 0.75) { qx = lerp(mx - d, 230, eOut(prog(wp, 0.75, 1))); qy = lerp(my + d, 0, eOut(prog(wp, 0.75, 1))); }
+        quill(qx, qy, 0.15, 1);
+        circleMark(mx, my, 50, 48, prog(lt, s4 + 2.2, s4 + 2.8), C.orange, 46, 6);
+      });
+      ctx.restore();
+    }
+  },
+  confuse(lt, g) {
+    const s5 = g("s5"), s6 = g("s6"), s7 = g("s7");
+    nameCard(440, 590, prog(lt, s5 + 0.3, s5 + 1.0), "leibniz", OPT.names ? "莱布尼茨" : "另一位数学家", OPT.names ? "Gottfried Leibniz" : "", OPT.names ? "德国 · 1646—1716" : "", 52);
+    // × 和 X 并排
+    const cx = 1320, cy = 420, ap = prog(lt, s6 - 0.1, s6 + 0.5), bp = prog(lt, s6 + 1.0, s6 + 1.6);
+    withT(cx - 200, cy, 1, 0, () => drawTimes(0, 0, 170, prog(lt, s6, s6 + 0.6), C.orange, 30));
+    label("乘号", cx - 200, cy + 170, 46, C.orange, ap);
+    label("X", cx + 200, cy + 8, 300, C.blue, bp, "center", 500);
+    label("字母", cx + 200, cy + 170, 46, C.blue, bp);
+    // 放大镜扫过
+    const mg = prog(lt, s6 + 2.0, s6 + 3.6);
+    if (mg > 0 && mg < 1) {
+      const mx = lerp(cx - 260, cx + 260, eInOut(mg)), my = cy - 10 + Math.sin(mg * Math.PI) * -40;
+      ctx.save(); ctx.globalAlpha *= Math.sin(mg * Math.PI) * 1.2;
+      ctx.lineWidth = 12; ctx.strokeStyle = C.brown; ctx.beginPath(); ctx.arc(mx, my, 110, 0, 7); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.fill();
+      strokeSeg(mx + 78, my + 78, mx + 160, my + 160, 1, C.brown, 22); ctx.restore();
+    }
+    label("像！", cx, cy - 190, 70, C.red, prog(lt, s6 + 2.8, s6 + 3.3));
+    // 写在一起：X×X，分不清
+    const wp = prog(lt, s7 - 0.2, s7 + 0.4);
+    if (wp > 0) {
+      ctx.save(); ctx.globalAlpha *= eOut(wp);
+      withT(cx, 790, 1, 0, () => {
+        card(-330, -120, 660, 240, 53, "rgba(255,252,240,0.96)", C.ink, 4);
+        const sh = Math.sin(lt * 18) * 3 * prog(lt, s7 + 0.9, s7 + 1.2);
+        font(150); ctx.fillStyle = C.ink; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText("X", -170 + sh, 55); ctx.fillText("X", 170 - sh, 55);
+        drawTimes(0 + sh, 0, 82, 1, C.ink, 15);
+      });
+      ctx.restore();
+      const qp = prog(lt, s7 + 0.9, s7 + 1.5);
+      [[cx - 360, 660, -0.3], [cx + 350, 670, 0.25], [cx + 30, 630, 0.05]].forEach(([x, y, r], i) => {
+        const p = prog(qp, i * 0.2, i * 0.2 + 0.6); if (p > 0) withT(x, y + Math.sin(lt * 4 + i) * 6, popScale(p), r, () => label("?", 0, 0, 90, C.red, 1));
+      });
+    }
+  },
+  letter(lt, g) {
+    const s8 = g("s8"), s9 = g("s9"), s10 = g("s10");
+    yearBadge("1698年", 250, 140, prog(lt, s8, s8 + 0.45), 61);
+    nameCard(440, 590, 1, "leibniz", OPT.names ? "莱布尼茨" : "另一位数学家", OPT.names ? "Gottfried Leibniz" : "", OPT.names ? "德国 · 1646—1716" : "", 52);
+    // 信封飞入
+    const fp = eOut(prog(lt, s8 + 0.9, s8 + 2.0));
+    const ex = lerp(2200, 1300, fp), ey = 620 - Math.sin(fp * Math.PI) * 140, er = lerp(0.5, -0.03, fp);
+    const open = eInOut(prog(lt, s9 - 0.1, s9 + 0.7)), out = eInOut(prog(lt, s9 + 0.5, s9 + 1.5));
+    const settle = eInOut(prog(lt, s9 + 1.6, s9 + 2.4));
+    withT(ex, ey, 1, er, () => {
+      const w = 560, h = 340;
+      // 信纸（从信封里抽出）
+      if (out > 0) {
+        const ly = lerp(lerp(0, -330, out), -40, settle);
+        ctx.save(); ctx.translate(0, ly);
+        card(-240, -200, 480, 470, 62, C.paper, C.brown, 3);
+        scribble(-190, -140, 380, 3, prog(lt, s9 + 1.2, s9 + 3.0), 63);
+        // 3 · 4
+        const dp = prog(lt, s10 + 0.4, s10 + 1.4);
+        const f = [{ t: "3", p: prog(dp, 0, 0.3) }, { op: "·", color: "#b8412c", p: prog(dp, 0.35, 0.65) }, { t: "4", p: prog(dp, 0.7, 1) }];
+        const pos = formula(f, 0, 110, 150);
+        const rp = prog(lt, s10 + 0.9, s10 + 1.7);
+        if (rp > 0 && rp < 1) { ctx.strokeStyle = `rgba(184,65,44,${1 - rp})`; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(pos[1].x, pos[1].y, 14 + rp * 60, 0, 7); ctx.stroke(); }
+        circleMark(pos[1].x, pos[1].y, 46, 46, prog(lt, s10 + 1.6, s10 + 2.1), C.orange, 64, 6);
+        ctx.restore();
+      }
+      if (settle >= 1) return;
+      ctx.save(); ctx.globalAlpha *= 1 - settle; ctx.translate(0, settle * 320);
+      ctx.fillStyle = "#e9d3a6"; roughRect(-w / 2, -h / 2, w, h, 12, 65, 1.2); ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = C.brown; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-w / 2, h / 2); ctx.lineTo(0, 10); ctx.lineTo(w / 2, h / 2); ctx.strokeStyle = "rgba(138,90,59,0.6)"; ctx.lineWidth = 3; ctx.stroke();
+      // 封口翻开
+      const fy = lerp(1, -1, open);
+      ctx.beginPath(); ctx.moveTo(-w / 2, -h / 2); ctx.lineTo(w / 2, -h / 2); ctx.lineTo(0, -h / 2 + 200 * fy); ctx.closePath();
+      ctx.fillStyle = fy > 0 ? "#dfc390" : "#d6b67e"; ctx.fill(); ctx.strokeStyle = C.brown; ctx.lineWidth = 4; ctx.stroke();
+      if (open < 0.5) { ctx.fillStyle = "#b8412c"; ctx.beginPath(); ctx.arc(0, -h / 2 + 175 * fy, 34, 0, 7); ctx.fill(); ctx.fillStyle = "#d9654d"; ctx.beginPath(); ctx.arc(-6, -h / 2 + 170 * fy, 14, 0, 7); ctx.fill(); }
+      ctx.restore();
+    });
+  },
+  today(lt, g) {
+    const s11 = g("s11");
+    pill("今天", W / 2, 190, 52, C.teal, "#fff", prog(lt, 0.6, 1.1), 71);
+    for (let i = 0; i < 6; i++) sparkle(W / 2 + Math.cos(i) * 260, 190 + Math.sin(i * 2) * 70, 1.1, prog(lt, 0.7 + i * 0.07, 1.4 + i * 0.07), i % 2 ? C.yellow : C.teal);
+    // 作业本格线：上线、中线（虚线）、下线
+    const ap = eOut(prog(lt, 1.0, 1.6));
+    if (ap <= 0) return;
+    ctx.save(); ctx.globalAlpha *= ap;
+    const top = 420, bot = 760, midY = (top + bot) / 2, x0 = 470, x1 = 1450;
+    card(x0 - 60, top - 90, x1 - x0 + 120, bot - top + 180, 72, "#fffefa", "#8fb3d9", 4);
+    strokeSeg(x0, top, x1, top, 1, "#9cc0e6", 4); strokeSeg(x0, bot, x1, bot, 1, "#9cc0e6", 4);
+    const mh = prog(lt, s11 + 3.0, s11 + 3.6);
+    ctx.setLineDash([16, 14]); strokeSeg(x0, midY, x1, midY, 1, mh > 0 ? C.teal : "#bcd6ef", lerp(3, 6, mh)); ctx.setLineDash([]);
+    font(300); const asc = ctx.measureText("3").actualBoundingBoxAscent; const base = midY + asc / 2;
+    const f = [{ t: "3", p: prog(lt, s11 + 0.3, s11 + 0.8) }, { op: "·", color: C.teal, p: prog(lt, s11 + 2.6, s11 + 3.1) }, { t: "4", p: prog(lt, s11 + 0.6, s11 + 1.1) }];
+    const pos = formula(f, W / 2, base, 300);
+    if (mh > 0) {
+      const pulse = 1 + 0.08 * Math.sin((lt - s11 - 3) * 6);
+      circleMark(pos[1].x, pos[1].y, 58 * pulse, 58 * pulse, mh, C.orange, 73, 7);
+      arrow(pos[1].x + 330, midY + 230, pos[1].x + 70, midY + 60, prog(lt, s11 + 3.3, s11 + 3.9), C.orange);
+      pill("写在中间", pos[1].x + 420, midY + 250, 44, C.orange, "#fff", prog(lt, s11 + 3.5, s11 + 4.0), 74);
+    }
+    ctx.restore();
+  },
+  both(lt, g) {
+    const s12 = g("s12");
+    const cardIn = i => eOut(prog(lt, 0.0 + i * 0.25, 0.6 + i * 0.25));
+    [[-1, "×", C.orange, s12 + 0.5], [1, "·", C.teal, s12 + 1.6]].forEach(([side, op, col, hit], i) => {
+      const a = cardIn(i); if (a <= 0) return;
+      const x = W / 2 + side * 420, y = 470 + (1 - a) * 60;
+      const hp = prog(lt, hit, hit + 0.8), glow = Math.sin(hp * Math.PI);
+      ctx.save(); ctx.globalAlpha *= a;
+      withT(x, y, 1 + glow * 0.05, 0, () => {
+        card(-360, -170, 720, 340, 80 + i, "#fffdf6", hp > 0 ? col : C.ink, hp > 0 ? 7 : 4);
+        const pos = formula([{ t: "3" }, { op, color: col }, { t: "4" }, { op: "=" }, { t: "12" }], 0, 60, 140);
+        if (hp > 0) circleMark(pos[1].x, pos[1].y, 50, 48, hp, col, 82 + i, 6);
+      });
+      ctx.restore();
+    });
+    const bp = prog(lt, s12 + 2.9, s12 + 3.5);
+    if (bp > 0) {
+      withT(W / 2, 830, popScale(bp), 0, () => {
+        font(64); const txt = "都可以表示乘法！", tw = ctx.measureText(txt).width, w = tw + 330;
+        roughRect(-w / 2, -70, w, 140, 70, 85, 1.5); ctx.fillStyle = C.yellow; ctx.fill(); ctx.lineWidth = 5; ctx.strokeStyle = C.ink; ctx.stroke();
+        drawTimes(-w / 2 + 90, 0, 46, 1, C.orange, 12); label("和", -w / 2 + 165, 0, 52, C.ink); drawDot(-w / 2 + 232, 0, 14, 1, C.teal);
+        ctx.fillStyle = C.ink; ctx.textAlign = "left"; ctx.textBaseline = "middle"; font(64); ctx.fillText(txt, -w / 2 + 285, 4);
+      });
+      for (let i = 0; i < 8; i++) sparkle(W / 2 + (i - 3.5) * 170, 830 + (i % 2 ? -110 : 110), 1.1, prog(lt, s12 + 3.1 + i * 0.05, s12 + 3.9 + i * 0.05), i % 2 ? C.orange : C.teal);
+    }
+  },
+  ending(lt, g, t) {
+    const s13 = g("s13");
+    // 彩带：× · ★
+    const r = rng(91);
+    ctx.save(); ctx.globalAlpha *= 0.55;
+    for (let i = 0; i < 44; i++) {
+      const x0 = r() * W, sp = 120 + r() * 160, delay = r() * 1.5, kind = i % 3, col = [C.orange, C.teal, C.blue, C.yellow, C.red][i % 5], rot = r() * 6;
+      const tt = lt - s13 - delay; if (tt < 0) continue;
+      const y = -60 + tt * sp, x = x0 + Math.sin(tt * 1.5 + i) * 40; if (y > H + 60) continue;
+      withT(x, y, 1, rot + tt * 2, () => { if (kind === 0) drawTimes(0, 0, 34, 1, col, 9); else if (kind === 1) drawDot(0, 0, 11, 1, col); else { ctx.fillStyle = col; ctx.beginPath(); for (let k = 0; k < 10; k++) { const rr = k % 2 ? 8 : 20, a = k / 10 * Math.PI * 2; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); } ctx.fill(); } });
+    }
+    ctx.restore();
+    popText("符号有故事，", W / 2, 400, 130, C.ink, s13 - 0.2, lt, 0.09);
+    popText("数学真有趣！", W / 2, 600, 130, C.orange, s13 + 1.3, lt, 0.09);
+    const pp = prog(lt, s13 + 2.6, s13 + 3.2);
+    withT(W / 2 - 120, 800, popScale(pp) * (1 + 0.05 * Math.sin(lt * 3)), 0, () => drawTimes(0, 0, 70, prog(pp, 0, 1), C.orange, 16));
+    withT(W / 2 + 120, 800, popScale(prog(lt, s13 + 2.8, s13 + 3.4)) * (1 + 0.05 * Math.sin(lt * 3 + 1)), 0, () => drawDot(0, 0, 22, 1, C.teal));
+  },
+};
+
+// ---------- 音效时间表（与画面共用同一套时刻，供混音脚本读取）----------
+function cues() {
+  const L = [], at = (sc, dt, type, gain = 1) => L.push({ t: +(SC[sc].start + dt).toFixed(3), type, gain });
+  const g = id => SG[id].start;
+  const rel = (sc, id, d) => g(id) - SC[sc].start + d;
+  at("title", 0.15, "draw"); at("title", 0.55, "draw"); at("title", 0.2, "pop", 0.6);
+  for (let i = 0; i < 5; i++) at("title", rel("title", "s0", -0.3 + i * 0.11), "pop", 0.55);
+  for (let i = 0; i < 12; i++) at("known", 0.15 + i * 0.06, "tick", 0.35);
+  for (let i = 0; i < 5; i++) at("known", rel("known", "s1", 0.6 + i * 0.16), "pop", 0.5);
+  at("known", rel("known", "s1", 1.7), "draw", 0.9); at("known", rel("known", "s1", 2.1), "ding", 0.7);
+  at("rewind", rel("rewind", "s2", 1.4), "rewind", 0.9);
+  at("rewind", SC.rewind.end - SC.rewind.start - 1.25, "stamp", 1);
+  at("oughtred", rel("oughtred", "s3", 0), "stamp", 0.9); at("oughtred", rel("oughtred", "s3", 1.5), "whoosh", 0.6);
+  at("oughtred", rel("oughtred", "s3", 4.0), "pop", 0.8); at("oughtred", rel("oughtred", "s4", -0.3), "paper", 0.7);
+  at("oughtred", rel("oughtred", "s4", 0.1), "scratch", 0.7); at("oughtred", rel("oughtred", "s4", 2.2), "ding", 0.6);
+  at("confuse", rel("confuse", "s5", 0.3), "whoosh", 0.6);
+  at("confuse", rel("confuse", "s6", 0), "draw", 0.8); at("confuse", rel("confuse", "s6", 1.0), "pop", 0.8);
+  at("confuse", rel("confuse", "s6", 2.0), "whoosh", 0.4); at("confuse", rel("confuse", "s6", 2.8), "boing", 0.7);
+  at("confuse", rel("confuse", "s7", 0.9), "wobble", 0.7);
+  at("letter", rel("letter", "s8", 0), "stamp", 0.9); at("letter", rel("letter", "s8", 0.9), "whoosh", 0.8);
+  at("letter", rel("letter", "s9", -0.1), "paper", 0.9); at("letter", rel("letter", "s9", 1.2), "scratch", 0.5);
+  at("letter", rel("letter", "s10", 0.4), "pop", 0.5); at("letter", rel("letter", "s10", 0.85), "drop", 1); at("letter", rel("letter", "s10", 1.25), "pop", 0.5);
+  at("letter", rel("letter", "s10", 1.6), "ding", 0.6);
+  at("today", 0.1, "forward", 0.9); at("today", 0.7, "sparkle", 0.8);
+  at("today", rel("today", "s11", 0.3), "pop", 0.5); at("today", rel("today", "s11", 0.6), "pop", 0.5); at("today", rel("today", "s11", 2.6), "drop", 0.8);
+  at("today", rel("today", "s11", 3.0), "ding", 0.7);
+  at("both", 0.0, "whoosh", 0.5); at("both", rel("both", "s12", 0.5), "ding", 0.6); at("both", rel("both", "s12", 1.6), "ding", 0.6);
+  at("both", rel("both", "s12", 2.9), "sparkle", 0.9);
+  at("ending", rel("ending", "s13", -0.2), "sparkle", 0.6); at("ending", rel("ending", "s13", 2.6), "tada", 1);
+  return L.sort((a, b) => a.t - b.t);
+}
+
+// ---------- 字幕 ----------
+function subtitle(t) {
+  const sg = TL.segments.find(s => !["s0", "s13"].includes(s.id) && t >= s.start - 0.1 && t <= s.end + 0.35);
+  if (!sg) return;
+  const a = Math.min(prog(t, sg.start - 0.1, sg.start + 0.1), 1 - prog(t, sg.end + 0.15, sg.end + 0.35));
+  const size = 52, symW = size * 0.62;
+  font(size);
+  const parts = [...sg.sub].reduce((acc, c) => { if ("×·".includes(c)) acc.push(c, ""); else acc[acc.length - 1] += c; return acc; }, [""]);
+  const ws = parts.map(p => p === "×" || p === "·" ? symW : ctx.measureText(p).width);
+  const tw = ws.reduce((a, b) => a + b, 0), w = tw + 90, h = 92, cy = H - 58 - h / 2;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = "rgba(45,32,24,0.72)"; ctx.beginPath(); ctx.roundRect(W / 2 - w / 2, H - 58 - h, w, h, 46); ctx.fill();
+  let x = W / 2 - tw / 2;
+  parts.forEach((p, i) => {
+    if (p === "×") drawTimes(x + symW / 2, cy, size * 0.42, 1, "#ffd27a", 6);
+    else if (p === "·") drawDot(x + symW / 2, cy, 7, 1, "#ffd27a");
+    else { ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(p, x, cy + 3); }
+    x += ws[i];
+  });
+  ctx.restore();
+}
+
+// ---------- 主渲染 ----------
+function renderAt(t) {
+  BOIL = Math.floor(t * 8);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  background(t);
+  const XF = 0.45;
+  TL.scenes.forEach((sc, i) => {
+    const last = i === TL.scenes.length - 1;
+    if (t < sc.start || (!last && t > sc.end + XF)) return;
+    const a = Math.min(i === 0 ? 1 : prog(t, sc.start, sc.start + XF), last ? 1 : 1 - prog(t, sc.end, sc.end + XF));
+    ctx.save(); ctx.globalAlpha = a;
+    scenes[sc.id](t - sc.start, id => SG[id].start - sc.start, t);
+    ctx.restore();
+  });
+  const mt = Math.min(prog(t, SC.oughtred.start, SC.oughtred.start + 0.6), 1 - prog(t, SC.today.end, SC.today.end + 0.45));
+  miniTimeline(t, mt);
+  if (OPT.sub) subtitle(t);
+}
+
+function setup(tl, opt = {}) {
+  TL = tl; Object.assign(OPT, opt);
+  SC = Object.fromEntries(tl.scenes.map(s => [s.id, s])); SG = Object.fromEntries(tl.segments.map(s => [s.id, s]));
+  makePaper();
+}
+window.setup = setup; window.renderAt = renderAt; window.cues = cues;
+
+// 直接用浏览器打开时：读取时间轴并实时预览（拖动进度条可逐帧查看）
+if (!window.__RENDER__) {
+  const q = new URLSearchParams(location.search);
+  fetch("../build/timeline.json").then(r => r.json()).then(async tl => {
+    await document.fonts.load(`500 40px "WenKai"`);
+    setup(tl, { sub: q.get("sub") !== "0", names: q.get("names") !== "0" });
+    const bar = document.getElementById("bar");
+    bar.innerHTML = `<input id="s" type="range" min="0" max="${tl.duration}" step="0.0333" style="width:80%"> <span id="tv"></span>`;
+    const s = document.getElementById("s"), tv = document.getElementById("tv");
+    let playing = true, t0 = performance.now(), base = 0;
+    s.oninput = () => { playing = false; renderAt(+s.value); tv.textContent = (+s.value).toFixed(2) + "s"; };
+    cv.onclick = () => { playing = !playing; base = +s.value; t0 = performance.now(); };
+    (function loop() { if (playing) { const t = (base + (performance.now() - t0) / 1000) % tl.duration; s.value = t; tv.textContent = t.toFixed(2) + "s"; renderAt(t); } requestAnimationFrame(loop); })();
+  });
+}
+</script>
+</body>
+</html>
