@@ -42,7 +42,7 @@
 | 和旁白对齐 | **精确到帧** | 很难控制 | 靠手动卡点 | 自动但较粗 | 精确 |
 | 改一处细节 | 改一行代码重新出片 | 通常要整段重新生成，结果每次都不同 | 方便 | 方便 | 需要编程 |
 | 画面风格 | 手绘卡通，统一可控 | 写实、电影感强 | 偏 PPT 感 | 偏模板感，评委见得多 | 偏理科讲解，低年级略显枯燥 |
-| 版权 / 合规 | 图形、音乐、音效都由代码生成，字体 OFL、语音模型 Apache-2.0，**无版权风险** | 需按《人工智能生成合成内容标识办法》（2025 年 9 月 1 日起施行）标识；部分赛事要求申报 AI 使用 | 取决于素材来源 | 模板与音乐的授权需自查 | 无风险 |
+| 版权 / 合规 | 图形、音乐、音效都由代码生成，字体 OFL，**无版权风险**；配音为 AI 合成，赛事要求申报时如实说明即可 | 需按《人工智能生成合成内容标识办法》（2025 年 9 月 1 日起施行）标识；部分赛事要求申报 AI 使用 | 取决于素材来源 | 模板与音乐的授权需自查 | 无风险 |
 | 成本 | 免费、可复现 | 按次付费，需反复“抽卡” | 免费，但费时 | 部分会员 | 免费 |
 
 **结论：采用 A，代码动画视频。** 这段视频的核心知识点就是“×”“X”“·”三个符号长什么样、写在什么位置，符号必须一笔不差。AI 视频模型最弱的恰恰是文字和符号。它也容易编造历史人物相貌，在优质课评比中反而会扣分。
@@ -51,7 +51,7 @@
 
 本片和参考教程的差别：
 
-- **配音**：教程用的是 Gemini TTS。本环境无法联网调用在线语音，所以改用离线的 Kokoro 中文语音模型（`zf` 女声，sid 43，语速 0.88）。每句合成后，都用 Paraformer 语音识别自动回听校对，确认没有漏字、加字。
+- **配音**：与教程一样使用 Gemini 语音合成（`gemini-3.8-flash-tts`，女声 Vindemiatrix）。语气写在 `speech_metadata.style` 里：“温柔亲切的小学女老师给二年级小朋友讲故事……”。注意不能把说明直接写进朗读文本，否则模型会连说明一起读出来。每句合成后，都用 Paraformer 语音识别自动回听校对，确认没有漏字、加字。离线备用方案是 Kokoro 中文模型（`--engine kokoro`），声音偏生硬。
 - **动画**：用 Canvas 自己写时间轴，没有用 HyperFrames 或 Remotion。思路相同：给定任意时刻，画面唯一确定；不读系统时间，随机数固定种子。
 - **字幕**：烧录在画面里时，× 和 · 单独绘制，避免字体里的 × 看起来像字母 x。
 
@@ -109,7 +109,9 @@ tools/subset_font.py    霞鹜文楷字体子集化（改了文字后要重跑�
 
 ```bash
 python3 tools/subset_font.py LXGWWenKai-Medium.ttf     # 改了任何文字后
-MODELS=/path/to/models tools/build.sh                  # 完整出片
+python3 tools/tts.py --engine gemini --models /path/to/models   # Gemini 配音（需 GEMINI_API_KEY 或云环境 Network secret）
+SKIP_TTS=1 tools/build.sh                              # 用上面的配音出片
+MODELS=/path/to/models tools/build.sh                  # 完整出片（离线 Kokoro 配音）
 SKIP_TTS=1 tools/build.sh                              # 只改了画面时，跳过配音
 node tools/render.mjs --stills 20,40,60                # 导出指定秒数的截图检查
 node tools/render.mjs --sub 1 --names 0 --out build/v.mp4   # 人物卡不显示名字
@@ -120,5 +122,5 @@ node tools/render.mjs --sub 1 --names 0 --out build/v.mp4   # 人物卡不显示
 ## 素材授权
 
 - 字体：霞鹜文楷 LXGW WenKai（SIL Open Font License 1.1），已子集化放在 `web/fonts/`。
-- 配音：Kokoro-82M v1.1-zh（Apache-2.0），经 sherpa-onnx 离线运行。
+- 配音：Google Gemini TTS（用户自己的 API 账号生成）；离线备用 Kokoro-82M v1.1-zh（Apache-2.0）。`output/样音/` 是 5 种音色的试听。
 - 图形、动画、背景音乐、音效：全部由本仓库代码生成，无第三方素材。

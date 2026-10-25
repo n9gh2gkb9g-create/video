@@ -34,7 +34,7 @@ class GeminiTTS:
     同一句话 + 同样设置的结果缓存在 build/tts_cache/，重跑不重复计费。"""
 
     def __init__(self, cfg):
-        self.model = cfg.get("model", "gemini-2.5-flash-preview-tts")
+        self.model = cfg.get("model", "gemini-3.8-flash-tts")
         self.voice = cfg.get("voice", "Leda")
         self.style = cfg.get("style", "")
         # 没有本地 Key 时，假定云环境的 Network secret 会在请求里自动加上 x-goog-api-key 头
@@ -51,18 +51,21 @@ class GeminiTTS:
                     return v.strip().strip('"\'')
 
     def say(self, text):
-        import base64, hashlib, time, urllib.request, urllib.error
-        prompt = f"{self.style}\n{text}" if self.style else text
-        h = hashlib.sha1(f"{self.model}|{self.voice}|{prompt}".encode()).hexdigest()[:16]
+        # Gemini 3.8 TTS 把 text 当逐字稿朗读，语气要放在 speech_metadata.style 里，否则会把说明也读出来
+        import base64, hashlib, io, time, urllib.request, urllib.error
+        h = hashlib.sha1(f"{self.model}|{self.voice}|{self.style}|{text}".encode()).hexdigest()[:16]
         fp = os.path.join(self.cache, h + ".wav")
         if os.path.exists(fp):
             x, sr = sf.read(fp, dtype="float32"); return x, sr
+        item = {"type": "text", "text": text}
+        if self.style:
+            item["annotations"] = [{"type": "speech_metadata", "style": self.style}]
         body = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": {
-                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}}},
+            "model": self.model, "input": [{"type": "user_input", "content": [item]}],
+            "response_format": {"type": "audio"},
+            "generation_config": {"speech_config": [{"voice": self.voice}]},
         }).encode()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/interactions"
         for attempt in range(5):
             hdr = {"Content-Type": "application/json"}
             if self.key:
@@ -75,10 +78,11 @@ class GeminiTTS:
                 if e.code in (429, 500, 503) and attempt < 4:
                     time.sleep(2 ** attempt * 3); continue
                 raise SystemExit(f"Gemini 请求失败 {e.code}: {msg}")
-        pcm = base64.b64decode(d["candidates"][0]["content"]["parts"][0]["inlineData"]["data"])
-        x = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768  # 24 kHz 单声道 16 位 PCM
-        sf.write(fp, x, 24000)
-        return x, 24000
+        audio = [c for s in d["steps"] if s.get("type") == "model_output"
+                 for c in s.get("content", []) if c.get("type") == "audio"][-1]
+        x, sr = sf.read(io.BytesIO(base64.b64decode(audio["data"])), dtype="float32")  # 默认 24 kHz WAV
+        sf.write(fp, x, sr)
+        return x, sr
 
 
 def resample(x, sr_in, sr_out):
